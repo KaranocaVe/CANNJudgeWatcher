@@ -63,6 +63,7 @@ public class PollService {
         Map<String,Object> metadata = contestMetadata(contest, contestStatus, now);
         repo.upsertContest(metadata, "ACTIVE".equals(contestStatus), defaultInterval);
         contestsSeen++;
+        if ("ENDED".equals(contestStatus)) continue;
         for (JsonNode p : contest.path("problems")) {
           String problemId = CannJudgeClient.text(p, "problem_id"); if (problemId == null) continue;
           JsonNode problem = safeProblem(problemId);

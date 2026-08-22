@@ -34,8 +34,8 @@ public class WatcherRepository {
       ON CONFLICT(id) DO UPDATE SET slug=excluded.slug,title=excluded.title,description=excluded.description,
         start_time=excluded.start_time,end_time=excluded.end_time,source_ongoing=excluded.source_ongoing,
         source_status=excluded.source_status,source_hash=excluded.source_hash,last_seen_at=now(),updated_at=now(),
-        monitoring_enabled=CASE WHEN contest.manual_override THEN contest.monitoring_enabled ELSE excluded.monitoring_enabled END,
-        status=CASE WHEN contest.manual_override THEN contest.status ELSE excluded.status END
+        monitoring_enabled=CASE WHEN excluded.status='ENDED' THEN false WHEN contest.manual_override THEN contest.monitoring_enabled ELSE excluded.monitoring_enabled END,
+        status=CASE WHEN excluded.status='ENDED' THEN 'ENDED' WHEN contest.manual_override THEN contest.status ELSE excluded.status END
       """, c.get("id"), c.get("slug"), c.get("title"), c.get("description"),
         sqlTime(c.get("startTime")), sqlTime(c.get("endTime")), c.get("sourceOngoing"), c.get("sourceStatus"),
         activeByTime ? "ACTIVE" : "ENDED", activeByTime, defaultInterval, c.get("sourceHash"));
@@ -82,7 +82,7 @@ public class WatcherRepository {
   public Map<String,Object> findContestRow(String id) { return jdbc.queryForMap("SELECT * FROM contest WHERE id=?", id); }
 
   public void setMonitoring(String id, boolean enabled) {
-    jdbc.update("UPDATE contest SET monitoring_enabled=?,manual_override=true,status=CASE WHEN ? THEN 'ACTIVE' ELSE 'MANUALLY_DISABLED' END,updated_at=now() WHERE id=?", enabled, enabled, id);
+    jdbc.update("UPDATE contest SET monitoring_enabled=CASE WHEN ? AND (end_time IS NULL OR end_time > now()) THEN true ELSE false END,manual_override=true,status=CASE WHEN ? AND (end_time IS NULL OR end_time > now()) THEN 'ACTIVE' WHEN ? THEN 'ENDED' ELSE 'MANUALLY_DISABLED' END,updated_at=now() WHERE id=?", enabled, enabled, enabled, id);
   }
 
   public void setPollInterval(String id, int seconds) { jdbc.update("UPDATE contest SET poll_interval_seconds=?,updated_at=now() WHERE id=?", seconds, id); }
