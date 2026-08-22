@@ -130,10 +130,38 @@ function HistoryView({ contestId, problemId, problems, teamName }: { contestId: 
     }))
     return Array.from(cases.values()).sort((a, b) => a.caseId.localeCompare(b.caseId))
   }, [history])
-  const caseHistoryRows = useMemo(() => caseRows.flatMap(item => item.rows.map(row => ({ caseId: item.caseId, ...row }))).sort((a, b) => new Date(b.observedAt || 0).getTime() - new Date(a.observedAt || 0).getTime()), [caseRows])
+  const caseIds = useMemo(() => caseRows.map(item => item.caseId), [caseRows])
+  const observationColumns = useMemo(() => [{ key: 'observedAt', label: '观测时间' }, ...caseIds.map(caseId => ({ key: caseId, label: caseId }))], [caseIds])
+  const observationRows = useMemo(() => {
+    type Observation = { observedAt?: string; values: Map<string, number | undefined> }
+    type CaseObservation = { value?: number; best?: number; previous?: number }
+    type ObservationRow = { observedAt?: string; cases: Record<string, CaseObservation> }
+    const grouped = new Map<string, Observation>()
+    history.forEach(point => {
+      const groupKey = point.observed_at || `unknown-${grouped.size}`
+      const row = grouped.get(groupKey) || { observedAt: point.observed_at, values: new Map<string, number | undefined>() }
+      ;(point.result || []).forEach((item, index) => row.values.set(caseKey(item, index), timeValue(item.time) ?? undefined))
+      grouped.set(groupKey, row)
+    })
+    const bestByCase = new Map<string, number>()
+    const previousByCase = new Map<string, number>()
+    return Array.from(grouped.values())
+      .sort((a, b) => new Date(a.observedAt || 0).getTime() - new Date(b.observedAt || 0).getTime())
+      .map<ObservationRow>(row => {
+        const cases: Record<string, CaseObservation> = {}
+        caseIds.forEach(caseId => {
+          const value = row.values.get(caseId)
+          const previous = previousByCase.get(caseId)
+          if (value != null) bestByCase.set(caseId, Math.min(bestByCase.get(caseId) ?? Number.POSITIVE_INFINITY, value))
+          cases[caseId] = { value, best: bestByCase.get(caseId), previous }
+          if (value != null) previousByCase.set(caseId, value)
+        })
+        return { observedAt: row.observedAt, cases }
+      })
+  }, [caseIds, history])
   if (!teamName) return <Card shadow="none" className="content-card empty-card"><Empty text="请先从最新榜单选择队伍" /></Card>
   const problem = problems.find(p => p.id === problemId); const latest = history.at(-1); const best = Math.max(...history.map(h => Number(h.score || 0)), 0)
-  return <div className="panel-stack"><Card shadow="none" className="content-card history-card"><Toolbar><div className="history-title"><strong>{teamName}</strong><span>{problem?.title || '当前题目'}</span></div><Select aria-label="趋势时间范围" size="sm" className="range-select" selectedKeys={new Set([days])} onSelectionChange={keys => setDays(String(Array.from(keys)[0] || '7'))}><SelectItem key="1">最近 24 小时</SelectItem><SelectItem key="7">最近 7 天</SelectItem><SelectItem key="30">最近 30 天</SelectItem></Select></Toolbar>{loading ? <LoadingRows /> : history.length ? <ReactECharts option={chart} style={{ height: 430 }} /> : <Empty text="该时间范围内暂无历史观测" />}</Card><div className="history-summary"><StatCard label="最新分数" value={score(latest?.score)} hint="当前采样" icon={Gauge} /><StatCard label="历史最佳" value={score(best)} hint="历史观测" icon={Check} /><StatCard label="变化事件" value={history.length} hint="无损历史" icon={BarChart3} /></div><Card shadow="none" className="content-card case-card"><CardHeader><div><h2>测试点完整历史</h2><p>每个 case 的最新耗时、历史最佳和相对上一次观测的变化</p></div><Chip size="sm" variant="flat">{caseRows.length} 个 case</Chip></CardHeader><CardBody><div className="case-grid">{caseRows.map(item => <div className="case-tile" key={item.caseId}><div className="case-tile-head"><strong>{item.caseId}</strong><Chip size="sm" color="success" variant="flat">最佳 {score(item.best)} μs</Chip></div><div className="case-tile-values"><span>最新<strong>{score(item.latest)} μs</strong></span><span className={changeClass(item.latest, item.previous)}>较上次<strong>{changeText(item.latest, item.previous)}</strong></span></div></div>)}</div><Divider /><Table aria-label="测试点历史" removeWrapper className="data-table history-table"><TableHeader><TableColumn>采样时间</TableColumn><TableColumn>Case</TableColumn><TableColumn>本次耗时</TableColumn><TableColumn>历史最佳</TableColumn><TableColumn>较上次</TableColumn></TableHeader><TableBody emptyContent={<Empty text="暂无测试点历史" />} items={caseHistoryRows}>{row => <TableRow key={`${row.caseId}-${row.observedAt}`}><TableCell>{fmt(row.observedAt)}</TableCell><TableCell><strong>{row.caseId}</strong></TableCell><TableCell>{score(row.value)} μs</TableCell><TableCell>{score(row.best)} μs</TableCell><TableCell><span className={changeClass(row.value, row.previous)}>{changeText(row.value, row.previous)}</span></TableCell></TableRow>}</TableBody></Table></CardBody></Card></div>
+  return <div className="panel-stack"><Card shadow="none" className="content-card history-card"><Toolbar><div className="history-title"><strong>{teamName}</strong><span>{problem?.title || '当前题目'}</span></div><Select aria-label="趋势时间范围" size="sm" className="range-select" selectedKeys={new Set([days])} onSelectionChange={keys => setDays(String(Array.from(keys)[0] || '7'))}><SelectItem key="1">最近 24 小时</SelectItem><SelectItem key="7">最近 7 天</SelectItem><SelectItem key="30">最近 30 天</SelectItem></Select></Toolbar>{loading ? <LoadingRows /> : history.length ? <ReactECharts option={chart} style={{ height: 430 }} /> : <Empty text="该时间范围内暂无历史观测" />}</Card><div className="history-summary"><StatCard label="最新分数" value={score(latest?.score)} hint="当前采样" icon={Gauge} /><StatCard label="历史最佳" value={score(best)} hint="历史观测" icon={Check} /><StatCard label="变化事件" value={history.length} hint="无损历史" icon={BarChart3} /></div><Card shadow="none" className="content-card case-card"><CardHeader><div><h2>测试点完整历史</h2><p>每行是一次观测时间点，横向展示所有测试点；时间从早到晚排列</p></div><Chip size="sm" variant="flat">{caseRows.length} 个 case</Chip></CardHeader><CardBody><div className="case-grid">{caseRows.map(item => <div className="case-tile" key={item.caseId}><div className="case-tile-head"><strong>{item.caseId}</strong><Chip size="sm" color="success" variant="flat">最佳 {score(item.best)} μs</Chip></div><div className="case-tile-values"><span>最新<strong>{score(item.latest)} μs</strong></span><span className={changeClass(item.latest, item.previous)}>较上次<strong>{changeText(item.latest, item.previous)}</strong></span></div></div>)}</div><Divider /><Table aria-label="测试点按观测时间的完整历史" removeWrapper className="data-table history-table case-history-table"><TableHeader columns={observationColumns}>{column => <TableColumn key={column.key}>{column.label}</TableColumn>}</TableHeader><TableBody emptyContent={<Empty text="暂无测试点历史" />} items={observationRows}>{row => <TableRow key={row.observedAt || 'unknown'}>{columnKey => { const key = String(columnKey); if (key === 'observedAt') return <TableCell>{fmt(row.observedAt)}</TableCell>; const observation = row.cases[key]; return <TableCell><div className="case-history-cell"><strong>{score(observation?.value)} μs</strong><small>最佳 {score(observation?.best)} · <span className={changeClass(observation?.value, observation?.previous)}>{changeText(observation?.value, observation?.previous)}</span></small></div></TableCell> }}</TableRow>}</TableBody></Table></CardBody></Card></div>
 }
 
 function AlertsView({ contestId }: { contestId: string }) {
