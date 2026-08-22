@@ -2,6 +2,7 @@ FROM maven:3.9.9-eclipse-temurin-21 AS backend-build
 WORKDIR /workspace
 COPY pom.xml .
 COPY src ./src
+COPY docker/maven-settings.xml /root/.m2/settings.xml
 RUN mvn -q -DskipTests package
 
 FROM node:22-alpine AS frontend-build
