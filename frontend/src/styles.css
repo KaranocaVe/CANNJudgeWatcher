@@ -77,10 +77,14 @@ button, input { font: inherit; }
 .team-link strong, .topic-link { overflow: hidden; color: #006fee; font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .team-link small { overflow: hidden; color: #8b96a0; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .team-link:hover strong, .topic-link:hover { text-decoration: underline; }
-.score-value { color: #27333d; }
-.best-score { color: #46647c; }
-.score-gap { display: inline-flex; min-width: 42px; justify-content: center; padding: 3px 7px; border-radius: 999px; color: #5d6a74; background: #f0f3f5; font-size: 10px; font-weight: 650; }
-.score-gap.negative { color: #c2410c; background: #fff1e8; }
+.ranking-note { padding: 13px 18px; display: flex; align-items: flex-start; gap: 10px; color: #53616b; background: #f7fbff; border-bottom: 1px solid #e2edf8; }
+.ranking-note svg { flex: 0 0 auto; margin-top: 1px; color: #006fee; }
+.ranking-note strong, .ranking-note span { display: block; }
+.ranking-note strong { color: #27333d; font-size: 12px; }
+.ranking-note span { margin-top: 3px; color: #71808c; font-size: 11px; line-height: 1.45; }
+.case-summary { display: flex; flex-direction: column; gap: 3px; }
+.case-summary strong { color: #3c4b55; font-size: 12px; font-weight: 650; }
+.case-summary small { color: #8b96a0; font-size: 10px; }
 .delta { display: block; margin-top: 3px; color: #9aa4ad; font-size: 10px; }
 .overview-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(430px, .8fr); gap: 16px; }
 .activity-card .heroui-card-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }

@@ -19,9 +19,9 @@ export type Contest = {
 export type Problem = { id: string; contestId: string; slug: string; title: string; difficulty?: number; tags?: string[] }
 export type Ranking = {
   contest_id?: string; problem_id?: string; team_key?: string; team_name?: string; user_nickname?: string
-  submitter_nickname?: string; rank?: number; status?: string; score?: number; create_time?: string
+  submitter_nickname?: string; rank?: number; status?: string; create_time?: string
   result?: Array<{ time?: number; status?: string; testcaseId?: string; precisionRatio?: number }>
-  observed_at?: string; updated_at?: string; previousRank?: number; previousScore?: number
+  observed_at?: string; updated_at?: string; previousRank?: number
 }
 export type HistoryPoint = Ranking & { event_type?: string; evidence?: Record<string, unknown> }
 export type ProblemStats = { observed_at?: string; attempt_count?: number; pass_user_count?: number; pass_count?: number; wrong_count?: number; fail_count?: number; submission_count?: number }
