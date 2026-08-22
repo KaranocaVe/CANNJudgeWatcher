@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: cannjudge-watcher
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/cannjudge_watcher}
+    username: ${DB_USERNAME:cannjudge}
+    password: ${DB_PASSWORD:cannjudge}
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+  jackson:
+    time-zone: Asia/Shanghai
+server:
+  port: ${SERVER_PORT:8080}
+  forward-headers-strategy: framework
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+cannjudge:
+  base-url: ${CANNJUDGE_BASE_URL:https://cannjudge.cn}
+  scheduler-tick-seconds: ${SCHEDULER_TICK_SECONDS:30}
+  default-poll-interval-seconds: ${DEFAULT_POLL_INTERVAL_SECONDS:120}
+  request-timeout-seconds: ${SOURCE_REQUEST_TIMEOUT_SECONDS:20}
+  max-page-size: ${SOURCE_MAX_PAGE_SIZE:100}
+  max-concurrent-polls: ${MAX_CONCURRENT_POLLS:2}
+admin:
+  username: ${ADMIN_USERNAME:admin}
+  password-hash: ${ADMIN_PASSWORD_HASH:}
+  password: ${ADMIN_PASSWORD:admin}

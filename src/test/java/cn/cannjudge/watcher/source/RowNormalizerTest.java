@@ -1,0 +1,25 @@
+package cn.cannjudge.watcher.source;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+
+class RowNormalizerTest {
+  private final ObjectMapper mapper = new ObjectMapper();
+
+  @Test
+  void normalizesTeamAndTestcaseDetailsWithStableHash() throws Exception {
+    var raw = mapper.readTree("""
+      {"rank":1,"status":"Pass","score":75.3,"team":{"_id":"team-1","team_name":"Alpha"},
+       "user":{"_id":"user-1","nickname":"alice"},"submitter":{"_id":"user-1","nickname":"alice"},
+       "submission_id":"submission-1","create_time":"2026-08-22T05:58:37.826Z",
+       "result":[{"testcase_id":"case-1","time":6.3,"precision_ratio":1,"testcase_status":"Pass"}]}
+      """);
+    var normalized = new RowNormalizer(mapper).ranking("contest-1", "problem-1", raw);
+    assertThat(normalized.get("teamKey")).isEqualTo("team:team-1");
+    assertThat(normalized.get("rank")).isEqualTo(1);
+    assertThat(normalized.get("resultJson").toString()).contains("case-1");
+    assertThat(String.valueOf(normalized.get("rowHash"))).isNotBlank();
+  }
+}
