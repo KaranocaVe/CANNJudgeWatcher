@@ -1,6 +1,5 @@
 package cn.cannjudge.watcher.model;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -17,8 +16,8 @@ public final class Models {
 
   public record Ranking(String contestId, String problemId, String teamKey, String teamId, String teamName,
       String userId, String userNickname, String submitterId, String submitterNickname, String submissionId,
-      Integer rank, String status, BigDecimal score, Instant createTime, List<Map<String,Object>> result,
-      Instant observedAt, Integer previousRank, BigDecimal previousScore) {}
+      Integer rank, String status, Instant createTime, List<Map<String,Object>> result,
+      Instant observedAt, Integer previousRank) {}
 
   public record Stats(String contestId, String problemId, int attemptCount, int passUserCount, int passCount,
       int wrongCount, int failCount, int submissionCount, Instant observedAt) {}

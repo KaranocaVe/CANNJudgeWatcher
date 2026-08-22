@@ -27,18 +27,17 @@ public class PollService {
   private final CannJudgeClient source;
   private final WatcherRepository repo;
   private final RowNormalizer normalizer;
-  private final RawScoreCalculator rawScores;
   private final ObjectMapper mapper;
   private final Clock clock;
   private final int defaultInterval;
   private final int pageSize;
   private final AtomicBoolean running = new AtomicBoolean();
 
-  public PollService(CannJudgeClient source, WatcherRepository repo, ObjectMapper mapper, Clock clock, RawScoreCalculator rawScores,
+  public PollService(CannJudgeClient source, WatcherRepository repo, ObjectMapper mapper, Clock clock,
       @Value("${cannjudge.default-poll-interval-seconds:120}") int defaultInterval,
       @Value("${cannjudge.max-page-size:100}") int pageSize) {
     this.source = source; this.repo = repo; this.mapper = mapper; this.normalizer = new RowNormalizer(mapper);
-    this.clock = clock; this.rawScores = rawScores; this.defaultInterval = defaultInterval; this.pageSize = pageSize;
+    this.clock = clock; this.defaultInterval = defaultInterval; this.pageSize = pageSize;
   }
 
   @Scheduled(fixedDelayString = "${cannjudge.scheduler-tick-seconds:30}000", initialDelayString = "5000")
@@ -77,8 +76,6 @@ public class PollService {
           String problemId = CannJudgeClient.text(p, "problem_id"); if (problemId == null) continue;
           List<JsonNode> ranking = fetchAllRanking(problemId);
           List<Map<String,Object>> normalizedRanking = ranking.stream().map(raw -> normalizer.ranking(contestId, problemId, raw)).toList();
-          repo.establishTestcaseReferences(contestId, problemId, rawScores.referenceTimes(normalizedRanking));
-          rawScores.attachScores(normalizedRanking, repo.testcaseReferences(contestId, problemId));
           Set<String> seen = new HashSet<>();
           for (Map<String,Object> row : normalizedRanking) {
             String key = String.valueOf(row.get("teamKey"));
@@ -153,7 +150,7 @@ public class PollService {
   private boolean isDue(String id, Instant now) { Map<String,Object> row = repo.findContestRow(id); Object last = row.get("last_poll_at"); int interval = ((Number)row.get("poll_interval_seconds")).intValue(); return last == null || !((java.sql.Timestamp)last).toInstant().plusSeconds(interval).isAfter(now); }
   private Map<String,Object> contestMetadata(JsonNode c, String status, Instant now) { Map<String,Object> m = new LinkedHashMap<>(); m.put("id", CannJudgeClient.text(c,"_id")); m.put("slug", first(c,"name","slug")); m.put("title", first(c,"title","name")); m.put("description", CannJudgeClient.text(c,"desc")); m.put("startTime", CannJudgeClient.instant(c.get("start_time"))); m.put("endTime", CannJudgeClient.instant(c.get("end_time"))); m.put("sourceOngoing", c.path("ongoing").asBoolean(false)); m.put("sourceStatus", status); m.put("sourceHash", Integer.toHexString(c.toString().hashCode())); return m; }
   private Map<String,Object> evidence(Map<String,Object> previous, Map<String,Object> row) { Map<String,Object> e = new LinkedHashMap<>(); if (previous != null) { e.put("previousRank", previous.get("rank")); e.put("previousStatus", previous.get("status")); } e.put("rank", row.get("rank")); return e; }
-  private Map<String,Object> databaseRow(String contestId, String problemId, Map<String,Object> p) { Map<String,Object> row = new LinkedHashMap<>(); row.put("contestId",contestId);row.put("problemId",problemId);row.put("teamKey",p.get("team_key"));row.put("teamId",p.get("team_id"));row.put("teamName",p.get("team_name"));row.put("userId",p.get("user_id"));row.put("userNickname",p.get("user_nickname"));row.put("submitterId",p.get("submitter_id"));row.put("submitterNickname",p.get("submitter_nickname"));row.put("submissionId",p.get("submission_id"));row.put("rank",p.get("rank"));row.put("status",p.get("status"));row.put("score",null);row.put("createTime",p.get("create_time"));row.put("resultJson",String.valueOf(p.getOrDefault("result","[]")));row.put("rowHash",p.get("row_hash"));return row; }
+  private Map<String,Object> databaseRow(String contestId, String problemId, Map<String,Object> p) { Map<String,Object> row = new LinkedHashMap<>(); row.put("contestId",contestId);row.put("problemId",problemId);row.put("teamKey",p.get("team_key"));row.put("teamId",p.get("team_id"));row.put("teamName",p.get("team_name"));row.put("userId",p.get("user_id"));row.put("userNickname",p.get("user_nickname"));row.put("submitterId",p.get("submitter_id"));row.put("submitterNickname",p.get("submitter_nickname"));row.put("submissionId",p.get("submission_id"));row.put("rank",p.get("rank"));row.put("status",p.get("status"));row.put("createTime",p.get("create_time"));row.put("resultJson",String.valueOf(p.getOrDefault("result","[]")));row.put("rowHash",p.get("row_hash"));return row; }
   private void evaluateChange(Map<String,Object> previous, Map<String,Object> row) { if (previous == null) return; Integer oldRank = number(previous.get("rank")); Integer newRank = number(row.get("rank")); if (oldRank != null && newRank != null && Math.abs(oldRank-newRank) >= threshold("rank_change_threshold",5)) alert("RANK_CHANGE","INFO",String.valueOf(row.get("contestId")),String.valueOf(row.get("problemId")),String.valueOf(row.get("teamKey")),"榜单名次发生显著变化",oldRank+" → "+newRank,Map.of("previousRank",oldRank,"rank",newRank)); }
   private int threshold(String key, int fallback) { try { return Integer.parseInt(repo.settings().getOrDefault(key,String.valueOf(fallback))); } catch (Exception e) { return fallback; } }
   private void alert(String rule, String severity, String contest, String problem, String team, String title, String message, Map<String,Object> evidence) { repo.createAlert(rule,severity,contest,problem,team,title,message,repo.json(evidence),rule+":"+String.valueOf(contest)+":"+String.valueOf(problem)+":"+String.valueOf(team)); }

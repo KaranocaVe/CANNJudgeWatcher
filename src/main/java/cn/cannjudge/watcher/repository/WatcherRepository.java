@@ -4,7 +4,6 @@ import cn.cannjudge.watcher.model.Models;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -104,13 +103,13 @@ public class WatcherRepository {
   }
 
   public List<Map<String,Object>> rankingHistory(String contestId, String problemId, Instant from, Instant to) {
-    String sql = "SELECT observed_at,team_key,team_name,user_nickname,rank,status,score,result,event_type,evidence FROM ranking_event WHERE contest_id=? AND problem_id=? AND observed_at BETWEEN ? AND ? ORDER BY observed_at,rank NULLS LAST";
+    String sql = "SELECT observed_at,team_key,team_name,user_nickname,rank,status,result,event_type,evidence FROM ranking_event WHERE contest_id=? AND problem_id=? AND observed_at BETWEEN ? AND ? ORDER BY observed_at,rank NULLS LAST";
     return friendlyRows(jdbc.queryForList(sql, contestId, problemId, sqlTime(from), sqlTime(to)));
   }
 
   public List<Map<String,Object>> latestRankingHistory(String contestId, String problemId, Instant at) {
     return friendlyRows(jdbc.queryForList("""
-      SELECT DISTINCT ON (team_key) team_key,team_name,user_nickname,rank,status,score,create_time,result,event_type,observed_at
+      SELECT DISTINCT ON (team_key) team_key,team_name,user_nickname,rank,status,create_time,result,event_type,observed_at
       FROM ranking_event WHERE contest_id=? AND problem_id=? AND observed_at<=? ORDER BY team_key,observed_at DESC,id DESC
       """, contestId, problemId, sqlTime(at)));
   }
@@ -120,39 +119,26 @@ public class WatcherRepository {
     return rows.isEmpty() ? null : rows.getFirst();
   }
 
-  public Map<String,BigDecimal> testcaseReferences(String contestId, String problemId) {
-    Map<String,BigDecimal> references = new LinkedHashMap<>();
-    jdbc.query("SELECT testcase_id,reference_time FROM testcase_reference WHERE contest_id=? AND problem_id=? ORDER BY testcase_id", (org.springframework.jdbc.core.RowCallbackHandler) rs -> references.put(rs.getString(1), rs.getBigDecimal(2)), contestId, problemId);
-    return references;
-  }
-
-  public void establishTestcaseReferences(String contestId, String problemId, Map<String,BigDecimal> references) {
-    references.forEach((testcaseId, referenceTime) -> jdbc.update("""
-      INSERT INTO testcase_reference(contest_id,problem_id,testcase_id,reference_time,established_at)
-      VALUES (?,?,?,?,now()) ON CONFLICT(contest_id,problem_id,testcase_id) DO NOTHING
-      """, contestId, problemId, testcaseId, referenceTime));
-  }
-
   public void insertRankingEvent(long pollId, Instant at, Map<String,Object> row, String eventType, String evidenceJson) {
     jdbc.update("""
       INSERT INTO ranking_event(poll_id,observed_at,contest_id,problem_id,team_key,event_type,team_id,team_name,user_id,user_nickname,
-      submitter_id,submitter_nickname,submission_id,rank,status,score,create_time,result,row_hash,evidence)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?::jsonb)
+      submitter_id,submitter_nickname,submission_id,rank,status,create_time,result,row_hash,evidence)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?::jsonb)
       """, pollId, sqlTime(at), row.get("contestId"), row.get("problemId"), row.get("teamKey"), eventType,
       row.get("teamId"), row.get("teamName"), row.get("userId"), row.get("userNickname"), row.get("submitterId"), row.get("submitterNickname"),
-      row.get("submissionId"), row.get("rank"), row.get("status"), row.get("score"), sqlTime(row.get("createTime")), row.get("resultJson"), row.get("rowHash"), evidenceJson);
+      row.get("submissionId"), row.get("rank"), row.get("status"), sqlTime(row.get("createTime")), row.get("resultJson"), row.get("rowHash"), evidenceJson);
   }
 
   public void upsertCurrent(Map<String,Object> row, long pollId, Instant at) {
     jdbc.update("""
       INSERT INTO ranking_current(contest_id,problem_id,team_key,team_id,team_name,user_id,user_nickname,submitter_id,submitter_nickname,
-      submission_id,rank,status,score,create_time,result,row_hash,last_poll_id,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?)
+      submission_id,rank,status,create_time,result,row_hash,last_poll_id,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?)
       ON CONFLICT(contest_id,problem_id,team_key) DO UPDATE SET team_id=excluded.team_id,team_name=excluded.team_name,user_id=excluded.user_id,
       user_nickname=excluded.user_nickname,submitter_id=excluded.submitter_id,submitter_nickname=excluded.submitter_nickname,submission_id=excluded.submission_id,
-      rank=excluded.rank,status=excluded.status,score=excluded.score,create_time=excluded.create_time,result=excluded.result,row_hash=excluded.row_hash,last_poll_id=excluded.last_poll_id,updated_at=excluded.updated_at
+      rank=excluded.rank,status=excluded.status,create_time=excluded.create_time,result=excluded.result,row_hash=excluded.row_hash,last_poll_id=excluded.last_poll_id,updated_at=excluded.updated_at
       """, row.get("contestId"), row.get("problemId"), row.get("teamKey"), row.get("teamId"), row.get("teamName"), row.get("userId"), row.get("userNickname"),
-      row.get("submitterId"), row.get("submitterNickname"), row.get("submissionId"), row.get("rank"), row.get("status"), row.get("score"), sqlTime(row.get("createTime")), row.get("resultJson"), row.get("rowHash"), pollId, sqlTime(at));
+      row.get("submitterId"), row.get("submitterNickname"), row.get("submissionId"), row.get("rank"), row.get("status"), sqlTime(row.get("createTime")), row.get("resultJson"), row.get("rowHash"), pollId, sqlTime(at));
   }
 
   public void deleteCurrent(String contestId, String problemId, String teamKey) { jdbc.update("DELETE FROM ranking_current WHERE contest_id=? AND problem_id=? AND team_key=?", contestId, problemId, teamKey); }
