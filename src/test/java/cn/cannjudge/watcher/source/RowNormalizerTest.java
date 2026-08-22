@@ -22,4 +22,19 @@ class RowNormalizerTest {
     assertThat(normalized.get("resultJson").toString()).contains("case-1");
     assertThat(String.valueOf(normalized.get("rowHash"))).isNotBlank();
   }
+
+  @Test
+  void ignoresSourceAggregateScoreWhenBuildingTheChangeHash() throws Exception {
+    var original = mapper.readTree("""
+      {"rank":1,"status":"Pass","score":12.34,"team":{"_id":"team-1"},
+       "result":[{"testcase_id":"case-1","time":6.3,"testcase_status":"Pass"}]}
+      """);
+    var recalculated = original.deepCopy();
+    ((com.fasterxml.jackson.databind.node.ObjectNode) recalculated).put("score", 98.76);
+    var normalizer = new RowNormalizer(mapper);
+
+    assertThat(normalizer.ranking("contest-1", "problem-1", original).get("rowHash"))
+      .isEqualTo(normalizer.ranking("contest-1", "problem-1", recalculated).get("rowHash"));
+    assertThat(normalizer.ranking("contest-1", "problem-1", original)).doesNotContainKey("score");
+  }
 }

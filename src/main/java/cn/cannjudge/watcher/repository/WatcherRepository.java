@@ -1,6 +1,7 @@
 package cn.cannjudge.watcher.repository;
 
 import cn.cannjudge.watcher.model.Models;
+import cn.cannjudge.watcher.service.RawScoreCalculator;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,9 +23,10 @@ import org.springframework.stereotype.Repository;
 public class WatcherRepository {
   private final JdbcTemplate jdbc;
   private final ObjectMapper mapper;
+  private final RawScoreCalculator rawScores;
   private final TypeReference<List<Map<String,Object>>> resultType = new TypeReference<>() {};
 
-  public WatcherRepository(JdbcTemplate jdbc, ObjectMapper mapper) { this.jdbc = jdbc; this.mapper = mapper; }
+  public WatcherRepository(JdbcTemplate jdbc, ObjectMapper mapper, RawScoreCalculator rawScores) { this.jdbc = jdbc; this.mapper = mapper; this.rawScores = rawScores; }
 
   public void upsertContest(Map<String,Object> c, boolean activeByTime, int defaultInterval) {
     jdbc.update("""
@@ -98,20 +100,19 @@ public class WatcherRepository {
   }
 
   public List<Map<String,Object>> currentRankings(String contestId, String problemId, String status, int limit) {
-    StringBuilder sql = new StringBuilder("SELECT * FROM ranking_current WHERE contest_id=? AND problem_id=?");
-    List<Object> args = new ArrayList<>(List.of(contestId, problemId));
-    if (status != null && !status.isBlank()) { sql.append(" AND status=?"); args.add(status); }
-    sql.append(" ORDER BY rank NULLS LAST, score DESC NULLS LAST LIMIT ?"); args.add(Math.min(Math.max(limit, 1), 500));
-    return friendlyRows(jdbc.queryForList(sql.toString(), args.toArray()));
+    List<Map<String,Object>> rows = jdbc.queryForList("SELECT * FROM ranking_current WHERE contest_id=? AND problem_id=? ORDER BY rank NULLS LAST, create_time ASC NULLS LAST, team_key", contestId, problemId);
+    rawScores.attachScores(rows);
+    if (status != null && !status.isBlank()) rows = rows.stream().filter(row -> status.equals(row.get("status"))).toList();
+    return friendlyRows(new ArrayList<>(rows.subList(0, Math.min(rows.size(), Math.min(Math.max(limit, 1), 500)))));
   }
 
   public List<Map<String,Object>> rankingHistory(String contestId, String problemId, Instant from, Instant to) {
     String sql = "SELECT observed_at,team_key,team_name,user_nickname,rank,status,score,result,event_type,evidence FROM ranking_event WHERE contest_id=? AND problem_id=? AND observed_at BETWEEN ? AND ? ORDER BY observed_at,rank NULLS LAST";
-    return friendlyRows(jdbc.queryForList(sql, contestId, problemId, sqlTime(from), sqlTime(to)));
+    return withRawScores(jdbc.queryForList(sql, contestId, problemId, sqlTime(from), sqlTime(to)));
   }
 
   public List<Map<String,Object>> latestRankingHistory(String contestId, String problemId, Instant at) {
-    return friendlyRows(jdbc.queryForList("""
+    return withRawScores(jdbc.queryForList("""
       SELECT DISTINCT ON (team_key) team_key,team_name,user_nickname,rank,status,score,create_time,result,event_type,observed_at
       FROM ranking_event WHERE contest_id=? AND problem_id=? AND observed_at<=? ORDER BY team_key,observed_at DESC,id DESC
       """, contestId, problemId, sqlTime(at)));
@@ -228,5 +229,10 @@ public class WatcherRepository {
       return value;
     }));
     return rows;
+  }
+
+  private List<Map<String,Object>> withRawScores(List<Map<String,Object>> rows) {
+    rawScores.attachScores(rows);
+    return friendlyRows(rows);
   }
 }

@@ -30,7 +30,8 @@ public class RowNormalizer {
     row.put("submitterId", text(submitter, "_id")); row.put("submitterNickname", text(submitter, "nickname"));
     row.put("submissionId", text(raw, "submission_id"));
     row.put("rank", integer(raw, "rank")); row.put("status", text(raw, "status"));
-    row.put("score", raw.hasNonNull("score") ? raw.get("score").decimalValue() : null);
+    // The CANNJudge aggregate score is relative to a moving global baseline.  Do not retain it
+    // or include it in the change hash: another team's run can change it for every leaderboard row.
     row.put("createTime", CannJudgeClient.instant(raw.get("create_time")));
     List<Map<String,Object>> results = new ArrayList<>();
     if (raw.path("result").isArray()) raw.path("result").forEach(r -> {
