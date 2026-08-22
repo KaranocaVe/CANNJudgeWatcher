@@ -4,12 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import org.springframework.stereotype.Component;
 
 /**
@@ -19,41 +16,39 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class RawScoreCalculator {
-  private static final double LOG_BASE = Math.log(1.5d);
   private final ObjectMapper mapper;
 
   public RawScoreCalculator(ObjectMapper mapper) { this.mapper = mapper; }
 
-  /** Adds the derived {@code score} field to each row without mutating stored row content. */
-  public void attachScores(List<Map<String,Object>> rows) {
-    List<RowCases> casesByRow = new ArrayList<>();
-    Map<String, BigDecimal> bestTimes = new LinkedHashMap<>();
-    Set<String> testcaseIds = new LinkedHashSet<>();
+  /** Returns fixed-reference candidates from a complete first observation. */
+  public Map<String,BigDecimal> referenceTimes(List<Map<String,Object>> rows) {
+    Map<String, BigDecimal> references = new LinkedHashMap<>();
     for (Map<String,Object> row : rows) {
       Map<String,CaseResult> cases = cases(row.get("result"));
-      casesByRow.add(new RowCases(row, cases));
       for (CaseResult testcase : cases.values()) {
-        testcaseIds.add(testcase.id());
-        if (testcase.valid()) bestTimes.merge(testcase.id(), testcase.time(), BigDecimal::min);
+        if (testcase.valid()) references.merge(testcase.id(), testcase.time(), BigDecimal::min);
       }
     }
-    for (RowCases rowCases : casesByRow) {
-      rowCases.row().put("score", score(rowCases.cases(), testcaseIds, bestTimes));
+    return references;
+  }
+
+  /** Adds a stable score based solely on permanently frozen per-case reference timings. */
+  public void attachScores(List<Map<String,Object>> rows, Map<String,BigDecimal> references) {
+    for (Map<String,Object> row : rows) {
+      row.put("score", score(cases(row.get("result")), references));
     }
   }
 
-  private BigDecimal score(Map<String,CaseResult> cases, Set<String> testcaseIds, Map<String,BigDecimal> bestTimes) {
-    if (testcaseIds.isEmpty()) return null;
+  private BigDecimal score(Map<String,CaseResult> cases, Map<String,BigDecimal> references) {
+    if (references.isEmpty()) return null;
     double total = 0d;
-    for (String testcaseId : testcaseIds) {
+    for (Map.Entry<String,BigDecimal> reference : references.entrySet()) {
+      String testcaseId = reference.getKey();
       CaseResult testcase = cases.get(testcaseId);
-      BigDecimal best = bestTimes.get(testcaseId);
-      if (testcase == null || !testcase.valid() || best == null || best.signum() <= 0) continue;
-      double ratio = testcase.time().doubleValue() / best.doubleValue();
-      if (ratio <= 0d) continue;
-      total += 100d / (1d + Math.log(ratio) / LOG_BASE);
+      if (testcase == null || !testcase.valid() || reference.getValue().signum() <= 0) continue;
+      total += Math.min(100d, 100d * reference.getValue().doubleValue() / testcase.time().doubleValue());
     }
-    return BigDecimal.valueOf(total / testcaseIds.size()).setScale(4, RoundingMode.HALF_UP);
+    return BigDecimal.valueOf(total / references.size()).setScale(4, RoundingMode.HALF_UP);
   }
 
   private Map<String,CaseResult> cases(Object value) {
@@ -86,6 +81,4 @@ public class RawScoreCalculator {
   private record CaseResult(String id, BigDecimal time, String status) {
     boolean valid() { return time != null && time.signum() > 0 && (status == null || status.isBlank() || "Pass".equalsIgnoreCase(status)); }
   }
-
-  private record RowCases(Map<String,Object> row, Map<String,CaseResult> cases) {}
 }

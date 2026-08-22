@@ -1,7 +1,6 @@
 package cn.cannjudge.watcher.repository;
 
 import cn.cannjudge.watcher.model.Models;
-import cn.cannjudge.watcher.service.RawScoreCalculator;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -23,10 +22,9 @@ import org.springframework.stereotype.Repository;
 public class WatcherRepository {
   private final JdbcTemplate jdbc;
   private final ObjectMapper mapper;
-  private final RawScoreCalculator rawScores;
   private final TypeReference<List<Map<String,Object>>> resultType = new TypeReference<>() {};
 
-  public WatcherRepository(JdbcTemplate jdbc, ObjectMapper mapper, RawScoreCalculator rawScores) { this.jdbc = jdbc; this.mapper = mapper; this.rawScores = rawScores; }
+  public WatcherRepository(JdbcTemplate jdbc, ObjectMapper mapper) { this.jdbc = jdbc; this.mapper = mapper; }
 
   public void upsertContest(Map<String,Object> c, boolean activeByTime, int defaultInterval) {
     jdbc.update("""
@@ -101,18 +99,17 @@ public class WatcherRepository {
 
   public List<Map<String,Object>> currentRankings(String contestId, String problemId, String status, int limit) {
     List<Map<String,Object>> rows = jdbc.queryForList("SELECT * FROM ranking_current WHERE contest_id=? AND problem_id=? ORDER BY rank NULLS LAST, create_time ASC NULLS LAST, team_key", contestId, problemId);
-    rawScores.attachScores(rows);
     if (status != null && !status.isBlank()) rows = rows.stream().filter(row -> status.equals(row.get("status"))).toList();
     return friendlyRows(new ArrayList<>(rows.subList(0, Math.min(rows.size(), Math.min(Math.max(limit, 1), 500)))));
   }
 
   public List<Map<String,Object>> rankingHistory(String contestId, String problemId, Instant from, Instant to) {
     String sql = "SELECT observed_at,team_key,team_name,user_nickname,rank,status,score,result,event_type,evidence FROM ranking_event WHERE contest_id=? AND problem_id=? AND observed_at BETWEEN ? AND ? ORDER BY observed_at,rank NULLS LAST";
-    return withRawScores(jdbc.queryForList(sql, contestId, problemId, sqlTime(from), sqlTime(to)));
+    return friendlyRows(jdbc.queryForList(sql, contestId, problemId, sqlTime(from), sqlTime(to)));
   }
 
   public List<Map<String,Object>> latestRankingHistory(String contestId, String problemId, Instant at) {
-    return withRawScores(jdbc.queryForList("""
+    return friendlyRows(jdbc.queryForList("""
       SELECT DISTINCT ON (team_key) team_key,team_name,user_nickname,rank,status,score,create_time,result,event_type,observed_at
       FROM ranking_event WHERE contest_id=? AND problem_id=? AND observed_at<=? ORDER BY team_key,observed_at DESC,id DESC
       """, contestId, problemId, sqlTime(at)));
@@ -121,6 +118,19 @@ public class WatcherRepository {
   public Map<String,Object> currentByKey(String contestId, String problemId, String teamKey) {
     List<Map<String,Object>> rows = jdbc.queryForList("SELECT * FROM ranking_current WHERE contest_id=? AND problem_id=? AND team_key=?", contestId, problemId, teamKey);
     return rows.isEmpty() ? null : rows.getFirst();
+  }
+
+  public Map<String,BigDecimal> testcaseReferences(String contestId, String problemId) {
+    Map<String,BigDecimal> references = new LinkedHashMap<>();
+    jdbc.query("SELECT testcase_id,reference_time FROM testcase_reference WHERE contest_id=? AND problem_id=? ORDER BY testcase_id", (org.springframework.jdbc.core.RowCallbackHandler) rs -> references.put(rs.getString(1), rs.getBigDecimal(2)), contestId, problemId);
+    return references;
+  }
+
+  public void establishTestcaseReferences(String contestId, String problemId, Map<String,BigDecimal> references) {
+    references.forEach((testcaseId, referenceTime) -> jdbc.update("""
+      INSERT INTO testcase_reference(contest_id,problem_id,testcase_id,reference_time,established_at)
+      VALUES (?,?,?,?,now()) ON CONFLICT(contest_id,problem_id,testcase_id) DO NOTHING
+      """, contestId, problemId, testcaseId, referenceTime));
   }
 
   public void insertRankingEvent(long pollId, Instant at, Map<String,Object> row, String eventType, String evidenceJson) {
@@ -231,8 +241,4 @@ public class WatcherRepository {
     return rows;
   }
 
-  private List<Map<String,Object>> withRawScores(List<Map<String,Object>> rows) {
-    rawScores.attachScores(rows);
-    return friendlyRows(rows);
-  }
 }

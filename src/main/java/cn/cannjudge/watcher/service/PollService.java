@@ -77,7 +77,8 @@ public class PollService {
           String problemId = CannJudgeClient.text(p, "problem_id"); if (problemId == null) continue;
           List<JsonNode> ranking = fetchAllRanking(problemId);
           List<Map<String,Object>> normalizedRanking = ranking.stream().map(raw -> normalizer.ranking(contestId, problemId, raw)).toList();
-          rawScores.attachScores(normalizedRanking);
+          repo.establishTestcaseReferences(contestId, problemId, rawScores.referenceTimes(normalizedRanking));
+          rawScores.attachScores(normalizedRanking, repo.testcaseReferences(contestId, problemId));
           Set<String> seen = new HashSet<>();
           for (Map<String,Object> row : normalizedRanking) {
             String key = String.valueOf(row.get("teamKey"));
