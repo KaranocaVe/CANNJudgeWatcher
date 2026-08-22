@@ -1,4 +1,4 @@
-FROM maven:3.9.9-eclipse-temurin-21 AS backend-build
+FROM maven:3.9.11-eclipse-temurin-21-alpine AS backend-build
 WORKDIR /workspace
 COPY pom.xml .
 COPY src ./src
@@ -12,7 +12,7 @@ RUN npm ci --prefer-offline --fetch-retries=5 --fetch-timeout=120000
 COPY frontend ./
 RUN npm run build
 
-FROM eclipse-temurin:21-jre AS backend
+FROM eclipse-temurin:21-jre-alpine AS backend
 WORKDIR /app
 COPY --from=backend-build /workspace/target/cannjudge-watcher-0.1.0.jar app.jar
 EXPOSE 8080
