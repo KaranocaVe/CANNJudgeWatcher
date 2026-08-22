@@ -27,17 +27,18 @@ public class PollService {
   private final CannJudgeClient source;
   private final WatcherRepository repo;
   private final RowNormalizer normalizer;
+  private final RawScoreCalculator rawScores;
   private final ObjectMapper mapper;
   private final Clock clock;
   private final int defaultInterval;
   private final int pageSize;
   private final AtomicBoolean running = new AtomicBoolean();
 
-  public PollService(CannJudgeClient source, WatcherRepository repo, ObjectMapper mapper, Clock clock,
+  public PollService(CannJudgeClient source, WatcherRepository repo, ObjectMapper mapper, Clock clock, RawScoreCalculator rawScores,
       @Value("${cannjudge.default-poll-interval-seconds:120}") int defaultInterval,
       @Value("${cannjudge.max-page-size:100}") int pageSize) {
     this.source = source; this.repo = repo; this.mapper = mapper; this.normalizer = new RowNormalizer(mapper);
-    this.clock = clock; this.defaultInterval = defaultInterval; this.pageSize = pageSize;
+    this.clock = clock; this.rawScores = rawScores; this.defaultInterval = defaultInterval; this.pageSize = pageSize;
   }
 
   @Scheduled(fixedDelayString = "${cannjudge.scheduler-tick-seconds:30}000", initialDelayString = "5000")
@@ -75,9 +76,10 @@ public class PollService {
         for (JsonNode p : contest.path("problems")) {
           String problemId = CannJudgeClient.text(p, "problem_id"); if (problemId == null) continue;
           List<JsonNode> ranking = fetchAllRanking(problemId);
+          List<Map<String,Object>> normalizedRanking = ranking.stream().map(raw -> normalizer.ranking(contestId, problemId, raw)).toList();
+          rawScores.attachScores(normalizedRanking);
           Set<String> seen = new HashSet<>();
-          for (JsonNode raw : ranking) {
-            Map<String,Object> row = normalizer.ranking(contestId, problemId, raw);
+          for (Map<String,Object> row : normalizedRanking) {
             String key = String.valueOf(row.get("teamKey"));
             if (!seen.add(key)) { alert("DUPLICATE_TEAM", "WARNING", contestId, problemId, key, "榜单存在重复队伍", "同一题目在一次采集中出现重复队伍键", Map.of("teamKey", key)); continue; }
             Map<String,Object> previous = repo.currentByKey(contestId, problemId, key);
