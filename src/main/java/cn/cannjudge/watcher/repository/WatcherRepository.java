@@ -99,8 +99,10 @@ public class WatcherRepository {
   }
 
   public List<Map<String,Object>> currentRankings(String contestId, String problemId, String status, int limit) {
-    StringBuilder sql = new StringBuilder("SELECT contest_id,problem_id,team_key,team_name,user_nickname,submitter_nickname,rank,status,create_time,")
-        .append(compactResult("result")).append(" AS result,updated_at FROM ranking_current WHERE contest_id=? AND problem_id=?");
+    StringBuilder sql = new StringBuilder("SELECT c.contest_id,c.problem_id,c.team_key,c.team_name,c.user_nickname,c.submitter_nickname,c.rank,c.status,c.create_time,")
+        .append(compactResult("c.result")).append(" AS result,")
+        .append(compactResult("CASE WHEN EXISTS (SELECT 1 FROM ranking_event current_event WHERE current_event.contest_id=c.contest_id AND current_event.problem_id=c.problem_id AND current_event.team_key=c.team_key AND current_event.poll_id=c.last_poll_id AND current_event.event_type<>'DELETE') THEN previous_event.result ELSE c.result END"))
+        .append(" AS previous_result,c.updated_at FROM ranking_current c LEFT JOIN LATERAL (SELECT previous_event.result FROM ranking_event previous_event WHERE previous_event.contest_id=c.contest_id AND previous_event.problem_id=c.problem_id AND previous_event.team_key=c.team_key AND previous_event.poll_id<c.last_poll_id AND previous_event.event_type<>'DELETE' ORDER BY previous_event.poll_id DESC,previous_event.id DESC LIMIT 1) previous_event ON true WHERE c.contest_id=? AND c.problem_id=?");
     List<Object> args = new ArrayList<>(List.of(contestId, problemId));
     if (status != null && !status.isBlank()) { sql.append(" AND status=?"); args.add(status); }
     sql.append(" ORDER BY rank NULLS LAST, create_time ASC NULLS LAST, team_key LIMIT ?");

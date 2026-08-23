@@ -21,6 +21,7 @@ export type Ranking = {
   contest_id?: string; problem_id?: string; team_key?: string; team_name?: string; user_nickname?: string
   submitter_nickname?: string; rank?: number; status?: string; create_time?: string
   result?: Array<{ time?: number; status?: string; testcaseId?: string; precisionRatio?: number }>
+  previous_result?: Array<{ time?: number; status?: string; testcaseId?: string; precisionRatio?: number }>
   observed_at?: string; updated_at?: string; previousRank?: number
 }
 export type CaseBestSummary = { global: Record<string, number>; teams: Record<string, Record<string, number>> }
