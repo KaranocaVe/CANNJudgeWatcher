@@ -133,8 +133,12 @@ button, input { font: inherit; }
 .empty svg { color: #b0bac2; }
 .panel-loading, .app-loading { min-height: 280px; display: grid; place-items: center; align-content: center; gap: 10px; color: #8b96a0; font-size: 12px; }
 .app-loading { min-height: 100vh; }
-.signal-cell { display: flex; align-items: center; gap: 8px; }
-.signal-cell strong { color: #38464e; font-size: 12px; }
+.signal-link { width: 100%; padding: 0; display: flex; align-items: center; gap: 8px; border: 0; background: transparent; cursor: pointer; text-align: left; }
+.signal-link strong { overflow: hidden; flex: 1; color: #38464e; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.signal-link svg { flex: 0 0 auto; color: #9aa4ad; transition: color .16s ease, transform .16s ease; }
+.signal-link:hover strong { color: #006fee; text-decoration: underline; }
+.signal-link:hover svg { color: #006fee; transform: translateX(2px); }
+.signal-link:focus-visible { outline: 2px solid #006fee; outline-offset: 3px; border-radius: 4px; }
 .alert-summary { display: flex; align-items: center; gap: 8px; color: #27333d; font-size: 13px; }
 .alert-overview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .risk-card { border: 1px solid #e1e7ed !important; border-radius: 10px !important; box-shadow: none !important; }
