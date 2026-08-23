@@ -4,6 +4,7 @@ import cn.cannjudge.watcher.model.Models;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -13,6 +14,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -97,21 +99,37 @@ public class WatcherRepository {
   }
 
   public List<Map<String,Object>> currentRankings(String contestId, String problemId, String status, int limit) {
-    List<Map<String,Object>> rows = jdbc.queryForList("SELECT * FROM ranking_current WHERE contest_id=? AND problem_id=? ORDER BY rank NULLS LAST, create_time ASC NULLS LAST, team_key", contestId, problemId);
-    if (status != null && !status.isBlank()) rows = rows.stream().filter(row -> status.equals(row.get("status"))).toList();
-    return friendlyRows(new ArrayList<>(rows.subList(0, Math.min(rows.size(), Math.min(Math.max(limit, 1), 500)))));
+    StringBuilder sql = new StringBuilder("SELECT contest_id,problem_id,team_key,team_name,user_nickname,submitter_nickname,rank,status,create_time,")
+        .append(compactResult("result")).append(" AS result,updated_at FROM ranking_current WHERE contest_id=? AND problem_id=?");
+    List<Object> args = new ArrayList<>(List.of(contestId, problemId));
+    if (status != null && !status.isBlank()) { sql.append(" AND status=?"); args.add(status); }
+    sql.append(" ORDER BY rank NULLS LAST, create_time ASC NULLS LAST, team_key LIMIT ?");
+    args.add(Math.min(Math.max(limit, 1), 1000));
+    return friendlyRows(jdbc.queryForList(sql.toString(), args.toArray()));
   }
 
-  public List<Map<String,Object>> rankingHistory(String contestId, String problemId, Instant from, Instant to) {
-    String sql = "SELECT observed_at,team_key,team_name,user_nickname,rank,status,result,event_type,evidence FROM ranking_event WHERE contest_id=? AND problem_id=? AND observed_at BETWEEN ? AND ? ORDER BY observed_at,rank NULLS LAST";
-    return friendlyRows(jdbc.queryForList(sql, contestId, problemId, sqlTime(from), sqlTime(to)));
+  public Map<String,Object> caseBestSummary(String contestId, String problemId, List<Map<String,Object>> rankings) {
+    Map<String,BigDecimal> global = new LinkedHashMap<>();
+    jdbc.query("SELECT testcase_id,MIN(best_time) FROM ranking_case_best WHERE contest_id=? AND problem_id=? GROUP BY testcase_id ORDER BY testcase_id",
+        (org.springframework.jdbc.core.RowCallbackHandler) rs -> global.put(rs.getString(1), rs.getBigDecimal(2)), contestId, problemId);
+    List<String> teamKeys = rankings.stream().map(row -> row.get("team_key")).filter(Objects::nonNull).map(String::valueOf).toList();
+    Map<String,Map<String,BigDecimal>> teams = new LinkedHashMap<>();
+    if (!teamKeys.isEmpty()) {
+      String placeholders = String.join(",", Collections.nCopies(teamKeys.size(), "?"));
+      List<Object> args = new ArrayList<>(); args.add(contestId); args.add(problemId); args.addAll(teamKeys);
+      jdbc.query("SELECT team_key,testcase_id,best_time FROM ranking_case_best WHERE contest_id=? AND problem_id=? AND team_key IN (" + placeholders + ")",
+          (org.springframework.jdbc.core.RowCallbackHandler) rs -> teams.computeIfAbsent(rs.getString(1), ignored -> new LinkedHashMap<>()).put(rs.getString(2), rs.getBigDecimal(3)), args.toArray());
+    }
+    return Map.of("global", global, "teams", teams);
   }
 
-  public List<Map<String,Object>> latestRankingHistory(String contestId, String problemId, Instant at) {
-    return friendlyRows(jdbc.queryForList("""
-      SELECT DISTINCT ON (team_key) team_key,team_name,user_nickname,rank,status,create_time,result,event_type,observed_at
-      FROM ranking_event WHERE contest_id=? AND problem_id=? AND observed_at<=? ORDER BY team_key,observed_at DESC,id DESC
-      """, contestId, problemId, sqlTime(at)));
+  public List<Map<String,Object>> rankingHistory(String contestId, String problemId, Instant from, Instant to, String teamKey) {
+    StringBuilder sql = new StringBuilder("SELECT observed_at,team_key,team_name,user_nickname,rank,status,")
+        .append(compactResult("result")).append(" AS result,event_type FROM ranking_event WHERE contest_id=? AND problem_id=? AND observed_at BETWEEN ? AND ?");
+    List<Object> args = new ArrayList<>(List.of(contestId, problemId, sqlTime(from), sqlTime(to)));
+    if (teamKey != null && !teamKey.isBlank()) { sql.append(" AND team_key=?"); args.add(teamKey); }
+    sql.append(" ORDER BY observed_at,rank NULLS LAST");
+    return friendlyRows(jdbc.queryForList(sql.toString(), args.toArray()));
   }
 
   public Map<String,Object> currentByKey(String contestId, String problemId, String teamKey) {
@@ -127,6 +145,35 @@ public class WatcherRepository {
       """, pollId, sqlTime(at), row.get("contestId"), row.get("problemId"), row.get("teamKey"), eventType,
       row.get("teamId"), row.get("teamName"), row.get("userId"), row.get("userNickname"), row.get("submitterId"), row.get("submitterNickname"),
       row.get("submissionId"), row.get("rank"), row.get("status"), sqlTime(row.get("createTime")), row.get("resultJson"), row.get("rowHash"), evidenceJson);
+  }
+
+  public void recordCaseBests(Map<String,Object> row, Instant observedAt) {
+    jdbc.update("""
+      INSERT INTO ranking_case_best(contest_id,problem_id,team_key,testcase_id,best_time,first_observed_at,updated_at)
+      SELECT ?,?,?,item->>'testcaseId',(item->>'time')::numeric,?,now()
+      FROM jsonb_array_elements(?::jsonb) AS item
+      WHERE item->>'testcaseId' IS NOT NULL
+        AND COALESCE(item->>'status', item->>'testcase_status')='Pass'
+        AND jsonb_typeof(item->'time')='number'
+        AND (item->>'time')::numeric>0
+      ON CONFLICT(contest_id,problem_id,team_key,testcase_id) DO UPDATE SET
+        best_time=LEAST(ranking_case_best.best_time,EXCLUDED.best_time),updated_at=now()
+      """, row.get("contestId"), row.get("problemId"), row.get("teamKey"), sqlTime(observedAt), row.get("resultJson"));
+  }
+
+  public Map<String,Object> contestOverview(String contestId, Instant from) {
+    Map<String,Map<String,Object>> problems = new LinkedHashMap<>();
+    jdbc.query("SELECT problem_id,COUNT(*) AS row_count,COUNT(*) FILTER (WHERE status='Pass') AS pass_count FROM ranking_current WHERE contest_id=? GROUP BY problem_id",
+        (org.springframework.jdbc.core.RowCallbackHandler) rs -> problems.put(rs.getString(1), new LinkedHashMap<>(Map.of("rowCount", rs.getInt(2), "passCount", rs.getInt(3), "eventCount", 0))), contestId);
+    jdbc.query("SELECT problem_id,COUNT(*) FROM ranking_event WHERE contest_id=? AND observed_at>=? GROUP BY problem_id",
+        (org.springframework.jdbc.core.RowCallbackHandler) rs -> problems.computeIfAbsent(rs.getString(1), ignored -> new LinkedHashMap<>(Map.of("rowCount", 0, "passCount", 0, "eventCount", 0))).put("eventCount", rs.getInt(2)), contestId, sqlTime(from));
+    List<Map<String,Object>> activity = jdbc.queryForList("""
+      SELECT date_trunc('hour',observed_at) AS observed_at,COUNT(*) AS changes,
+        COUNT(*) FILTER (WHERE event_type='DELETE') AS deletes
+      FROM ranking_event WHERE contest_id=? AND observed_at>=?
+      GROUP BY date_trunc('hour',observed_at) ORDER BY observed_at
+      """, contestId, sqlTime(from));
+    return Map.of("problems", problems, "activity", activity);
   }
 
   public void upsertCurrent(Map<String,Object> row, long pollId, Instant at) {
@@ -210,6 +257,24 @@ public class WatcherRepository {
   }
   private Instant instant(Timestamp t) { return t == null ? null : t.toInstant(); }
   private Object sqlTime(Object value) { return value instanceof Instant i ? Timestamp.from(i) : value; }
+  /**
+   * CANNJudge sometimes embeds megabytes of compiler output in result[].message.  Raw results
+   * remain in the current/event tables for forensic use, but UI endpoints only need these stable
+   * per-testcase metrics.  Keeping the projection in SQL avoids moving opaque logs over JDBC.
+   */
+  private String compactResult(String resultColumn) {
+    return """
+      COALESCE((
+        SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
+          'time', testcase.value->'time',
+          'status', COALESCE(testcase.value->'status', testcase.value->'testcase_status'),
+          'testcaseId', COALESCE(testcase.value->'testcaseId', testcase.value->'testcase_id'),
+          'precisionRatio', COALESCE(testcase.value->'precisionRatio', testcase.value->'precision_ratio')
+        )))
+        FROM jsonb_array_elements(COALESCE(%s, '[]'::jsonb)) AS testcase(value)
+      ), '[]'::jsonb)
+      """.formatted(resultColumn);
+  }
   private List<String> parseList(String json) { try { return json == null ? List.of() : mapper.readValue(json, new TypeReference<>() {}); } catch (Exception e) { return List.of(); } }
   private Map<String,Object> parseMap(String json) { try { return json == null ? Map.of() : mapper.readValue(json, new TypeReference<>() {}); } catch (Exception e) { return Map.of(); } }
   public String json(Object value) { try { return mapper.writeValueAsString(value); } catch (JsonProcessingException e) { return "{}"; } }

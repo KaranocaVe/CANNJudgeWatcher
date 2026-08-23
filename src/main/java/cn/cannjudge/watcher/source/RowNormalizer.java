@@ -38,7 +38,9 @@ public class RowNormalizer {
       Map<String,Object> item = new LinkedHashMap<>();
       item.put("testcaseId", text(r, "testcase_id")); item.put("time", r.hasNonNull("time") ? r.get("time").decimalValue() : null);
       item.put("precisionRatio", r.hasNonNull("precision_ratio") ? r.get("precision_ratio").decimalValue() : null);
-      item.put("status", text(r, "testcase_status")); if (r.has("msg")) item.put("message", text(r, "msg"));
+      // CANNJudge's msg may contain megabytes of compiler output.  It is not a testcase metric,
+      // and including it would turn routine leaderboard observations into log archival.
+      item.put("status", text(r, "testcase_status"));
       results.add(item);
     });
     row.put("result", results); row.put("resultJson", canonical(results)); row.put("rowHash", hash(row));

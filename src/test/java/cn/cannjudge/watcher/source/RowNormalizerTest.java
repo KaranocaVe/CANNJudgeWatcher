@@ -37,4 +37,18 @@ class RowNormalizerTest {
       .isEqualTo(normalizer.ranking("contest-1", "problem-1", recalculated).get("rowHash"));
     assertThat(normalizer.ranking("contest-1", "problem-1", original)).doesNotContainKey("score");
   }
+
+  @Test
+  void omitsVerboseCompilerLogsFromNormalizedTestcaseEvidence() throws Exception {
+    var raw = mapper.readTree("""
+      {"rank":1,"status":"Compile Error","user":{"_id":"user-1"},
+       "result":[{"testcase_id":"case-1","time":0,"precision_ratio":0,
+       "testcase_status":"Compile Error","msg":"very long compiler output"}]}
+      """);
+
+    var normalized = new RowNormalizer(mapper).ranking("contest-1", "problem-1", raw);
+
+    assertThat(String.valueOf(normalized.get("resultJson"))).doesNotContain("compiler output");
+    assertThat(String.valueOf(normalized.get("resultJson"))).contains("case-1", "Compile Error");
+  }
 }

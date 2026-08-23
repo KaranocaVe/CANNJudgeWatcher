@@ -90,6 +90,7 @@ public class PollService {
                 continue;
               }
               repo.insertRankingEvent(pollId, now, row, previous == null ? "UPSERT" : "UPDATE", repo.json(evidence(previous, row)));
+              repo.recordCaseBests(row, now);
               repo.upsertCurrent(row, pollId, now); changed++;
               evaluateChange(previous, row);
             }

@@ -23,6 +23,12 @@ export type Ranking = {
   result?: Array<{ time?: number; status?: string; testcaseId?: string; precisionRatio?: number }>
   observed_at?: string; updated_at?: string; previousRank?: number
 }
+export type CaseBestSummary = { global: Record<string, number>; teams: Record<string, Record<string, number>> }
+export type RankingResponse = { items: Ranking[]; caseBests: CaseBestSummary }
+export type ContestOverview = {
+  problems: Record<string, { rowCount: number; passCount: number; eventCount: number }>
+  activity: Array<{ observed_at: string; changes: number; deletes: number }>
+}
 export type HistoryPoint = Ranking & { event_type?: string; evidence?: Record<string, unknown> }
 export type ProblemStats = { observed_at?: string; attempt_count?: number; pass_user_count?: number; pass_count?: number; wrong_count?: number; fail_count?: number; submission_count?: number }
 export type PollRun = { id: number; started_at?: string; finished_at?: string; status: 'RUNNING' | 'SUCCESS' | 'FAILED'; contests_seen?: number; rows_seen?: number; changed_rows?: number; response_hash?: string; error_message?: string }
