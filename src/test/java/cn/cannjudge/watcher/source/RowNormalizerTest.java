@@ -66,4 +66,16 @@ class RowNormalizerTest {
     assertThat(String.valueOf(normalized.get("resultJson"))).doesNotContain("compiler output");
     assertThat(String.valueOf(normalized.get("resultJson"))).contains("case-1", "Compile Error");
   }
+
+  @Test
+  void keepsWrongAnswerTestcaseTimingForPerformanceViews() throws Exception {
+    var raw = mapper.readTree("""
+      {"rank":1,"status":"WrongAnswer","team":{"_id":"team-1"},
+       "result":[{"testcase_id":"case-1","time":18.75,"testcase_status":"WrongAnswer"}]}
+      """);
+
+    var normalized = new RowNormalizer(mapper).ranking("contest-1", "problem-1", raw);
+
+    assertThat(String.valueOf(normalized.get("resultJson"))).contains("case-1", "18.75", "WrongAnswer");
+  }
 }

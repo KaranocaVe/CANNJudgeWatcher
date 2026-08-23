@@ -210,10 +210,10 @@ public class WatcherRepository {
     int improvements = 0, regressions = 0;
     for (var entry : testcaseMap(currentValue).entrySet()) {
       var old = previous.get(entry.getKey()); if (old == null) continue;
-      BigDecimal current = passedTime(entry.getValue()), prior = passedTime(old);
+      BigDecimal current = observedTime(entry.getValue()), prior = observedTime(old);
       if (current != null && prior != null) { int compare = current.compareTo(prior); if (compare < 0) improvements++; if (compare > 0) regressions++; }
-      else if (current != null && prior == null) improvements++;
-      else if (current == null && prior != null) regressions++;
+      if (isPassed(entry.getValue()) && !isPassed(old)) improvements++;
+      if (!isPassed(entry.getValue()) && isPassed(old)) regressions++;
     }
     return Integer.compare(improvements, regressions);
   }
@@ -231,10 +231,13 @@ public class WatcherRepository {
     return testcases;
   }
 
-  private BigDecimal passedTime(com.fasterxml.jackson.databind.JsonNode testcase) {
-    String status = testcase.path("status").asText(testcase.path("testcase_status").asText(""));
-    if (!"Pass".equals(status) || !testcase.path("time").isNumber()) return null;
+  private BigDecimal observedTime(com.fasterxml.jackson.databind.JsonNode testcase) {
+    if (!testcase.path("time").isNumber()) return null;
     BigDecimal time = testcase.path("time").decimalValue(); return time.signum() > 0 ? time : null;
+  }
+
+  private boolean isPassed(com.fasterxml.jackson.databind.JsonNode testcase) {
+    return "Pass".equals(testcase.path("status").asText(testcase.path("testcase_status").asText("")));
   }
 
   public void upsertCurrent(Map<String,Object> row, long pollId, Instant at) {
