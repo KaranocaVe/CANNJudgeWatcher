@@ -1,4 +1,4 @@
-import type { Alert, Contest, ContestOverview, HistoryPoint, PollRun, Problem, ProblemStats, RankingResponse, Summary } from './types'
+import type { Alert, Contest, ContestOverview, HistoryResponse, PollRun, Problem, ProblemStats, RankingResponse, Summary } from './types'
 
 type Params = Record<string, string | number | boolean | undefined>
 
@@ -19,7 +19,7 @@ export const api = {
   contests: (signal?: AbortSignal) => request<Contest[]>('/api/contests', { signal }),
   contest: (id: string, signal?: AbortSignal) => request<{ contest: Contest; problems: Problem[] }>(`/api/contests/${id}`, { signal }),
   rankings: (contestId: string, problemId: string, params: Params = {}, signal?: AbortSignal) => request<RankingResponse>('/api/rankings', { signal }, { contestId, problemId, limit: 1000, ...params }),
-  history: (contestId: string, problemId: string, from?: string, to?: string, options: { teamKey?: string; signal?: AbortSignal } = {}) => request<{ items: HistoryPoint[] }>('/api/history', { signal: options.signal }, { contestId, problemId, from, to, teamKey: options.teamKey }),
+  history: (contestId: string, problemId: string, from?: string, to?: string, options: { teamKey?: string; signal?: AbortSignal } = {}) => request<HistoryResponse>('/api/history', { signal: options.signal }, { contestId, problemId, from, to, teamKey: options.teamKey }),
   contestOverview: (contestId: string, signal?: AbortSignal) => request<ContestOverview>('/api/dashboard/contest-overview', { signal }, { contestId }),
   stats: (contestId: string, problemId: string, from?: string, to?: string) => request<{ items: ProblemStats[] }>('/api/problem-stats', {}, { contestId, problemId, from, to }),
   alerts: (params: Params = {}, signal?: AbortSignal) => request<Alert[]>('/api/alerts', { signal }, { limit: 200, ...params }),

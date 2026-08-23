@@ -26,6 +26,7 @@ export type Ranking = {
 }
 export type CaseBestSummary = { global: Record<string, number>; teams: Record<string, Record<string, number>> }
 export type RankingResponse = { items: Ranking[]; caseBests: CaseBestSummary }
+export type HistoryResponse = { items: HistoryPoint[]; caseBests?: CaseBestSummary }
 export type ContestOverview = {
   problems: Record<string, { rowCount: number; passCount: number; eventCount: number }>
   activity: Array<{ observed_at: string; changes: number; deletes: number; improvements?: number; regressions?: number }>

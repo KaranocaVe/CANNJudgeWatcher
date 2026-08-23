@@ -32,7 +32,12 @@ public class ApiController {
   }
   @GetMapping("/contests/{id}/problems") public List<Models.Problem> problems(@PathVariable String id) { return repo.findProblems(id); }
   @GetMapping("/rankings") public Map<String,Object> rankings(@RequestParam String contestId, @RequestParam String problemId, @RequestParam(required=false) String status, @RequestParam(defaultValue="1000") int limit) { List<Map<String,Object>> items=repo.currentRankings(contestId, problemId, status, limit); return Map.of("items", items, "caseBests", repo.caseBestSummary(contestId, problemId, items)); }
-  @GetMapping("/history") public Map<String,Object> history(@RequestParam String contestId, @RequestParam String problemId, @RequestParam(required=false) Instant from, @RequestParam(required=false) Instant to, @RequestParam(required=false) String teamKey) { Instant end=to==null?Instant.now():to; Instant start=from==null?end.minus(7, ChronoUnit.DAYS):from; return Map.of("from",start,"to",end,"items",repo.rankingHistory(contestId,problemId,start,end,teamKey)); }
+  @GetMapping("/history") public Map<String,Object> history(@RequestParam String contestId, @RequestParam String problemId, @RequestParam(required=false) Instant from, @RequestParam(required=false) Instant to, @RequestParam(required=false) String teamKey) {
+    Instant end=to==null?Instant.now():to; Instant start=from==null?end.minus(7, ChronoUnit.DAYS):from;
+    Map<String,Object> result = new LinkedHashMap<>(); result.put("from", start); result.put("to", end); result.put("items", repo.rankingHistory(contestId,problemId,start,end,teamKey));
+    if (teamKey != null && !teamKey.isBlank()) result.put("caseBests", repo.caseBestSummaryForTeams(contestId, problemId, List.of(teamKey)));
+    return result;
+  }
   @GetMapping("/dashboard/contest-overview") public Map<String,Object> contestOverview(@RequestParam String contestId) { return repo.contestOverview(contestId, Instant.now().minus(7, ChronoUnit.DAYS)); }
   @GetMapping("/problem-stats") public Map<String,Object> stats(@RequestParam String contestId, @RequestParam String problemId, @RequestParam(required=false) Instant from, @RequestParam(required=false) Instant to) { Instant end=to==null?Instant.now():to; Instant start=from==null?end.minus(7, ChronoUnit.DAYS):from; return Map.of("items",repo.statsHistory(contestId,problemId,start,end)); }
   @GetMapping("/alerts") public List<Models.Alert> alerts(@RequestParam(defaultValue="false") boolean openOnly, @RequestParam(required=false) String contestId, @RequestParam(required=false) String problemId, @RequestParam(defaultValue="100") int limit) { return repo.alerts(openOnly,contestId,problemId,limit); }

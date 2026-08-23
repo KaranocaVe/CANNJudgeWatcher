@@ -111,10 +111,13 @@ public class WatcherRepository {
   }
 
   public Map<String,Object> caseBestSummary(String contestId, String problemId, List<Map<String,Object>> rankings) {
+    return caseBestSummaryForTeams(contestId, problemId, rankings.stream().map(row -> row.get("team_key")).filter(Objects::nonNull).map(String::valueOf).toList());
+  }
+
+  public Map<String,Object> caseBestSummaryForTeams(String contestId, String problemId, List<String> teamKeys) {
     Map<String,BigDecimal> global = new LinkedHashMap<>();
     jdbc.query("SELECT testcase_id,MIN(best_time) FROM ranking_case_best WHERE contest_id=? AND problem_id=? GROUP BY testcase_id ORDER BY testcase_id",
         (org.springframework.jdbc.core.RowCallbackHandler) rs -> global.put(rs.getString(1), rs.getBigDecimal(2)), contestId, problemId);
-    List<String> teamKeys = rankings.stream().map(row -> row.get("team_key")).filter(Objects::nonNull).map(String::valueOf).toList();
     Map<String,Map<String,BigDecimal>> teams = new LinkedHashMap<>();
     if (!teamKeys.isEmpty()) {
       String placeholders = String.join(",", Collections.nCopies(teamKeys.size(), "?"));
