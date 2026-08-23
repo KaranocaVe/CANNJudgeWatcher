@@ -51,7 +51,7 @@ button, input { font: inherit; }
 .stat-label svg { color: #a6b2bb; }
 .stat-card strong { display: block; margin-top: 8px; color: #17212b; font-size: 25px; line-height: 1.1; letter-spacing: -.04em; }
 .stat-card small { display: block; margin-top: 8px; color: #9aa4ad; font-size: 10px; }
-.content-card .heroui-card-header { min-height: 60px; padding: 15px 20px; border-bottom: 1px solid #edf0f3; }
+.content-card .heroui-card-header { min-height: 50px; padding: 13px 20px; border-bottom: 1px solid #edf0f3; }
 .content-card .heroui-card-header h2 { margin: 0; color: #17212b; font-size: 15px; }
 .content-card .heroui-card-header p { margin: 4px 0 0; color: #8b96a0; font-size: 11px; }
 .content-card .heroui-card-body { padding: 18px 20px; }
@@ -162,7 +162,7 @@ button, input { font: inherit; }
 .auth-brand strong, .auth-brand span { display: block; }
 .auth-brand strong { color: #24313d; font-size: 13px; font-weight: 700; letter-spacing: -.01em; }
 .auth-brand > div > span { margin-top: 3px; color: #8b96a0; font-size: 10px; }
-.auth-intro { position: relative; margin-bottom: 24px; }
+.auth-intro { position: relative; margin-bottom: 20px; }
 .auth-card h2 { margin: 6px 0 0; color: #17212b; font-size: 25px; font-weight: 730; letter-spacing: -.045em; }
 .auth-card p { max-width: 390px; margin: 8px 0 0; color: #71808c; font-size: 12px; line-height: 1.55; }
 .auth-form { display: flex; flex-direction: column; gap: 14px; }
