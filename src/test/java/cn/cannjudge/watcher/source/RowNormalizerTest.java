@@ -39,6 +39,21 @@ class RowNormalizerTest {
   }
 
   @Test
+  void ignoresRankAndSubmissionMetadataWhenBuildingTheCaseEvidenceHash() throws Exception {
+    var original = mapper.readTree("""
+      {"rank":1,"status":"Pass","submission_id":"submission-1","create_time":"2026-08-22T05:58:37.826Z",
+       "team":{"_id":"team-1"},"result":[{"testcase_id":"case-1","time":6.3,"testcase_status":"Pass"}]}
+      """);
+    var reordered = original.deepCopy();
+    ((com.fasterxml.jackson.databind.node.ObjectNode) reordered).put("rank", 99).put("submission_id", "submission-2");
+    ((com.fasterxml.jackson.databind.node.ObjectNode) reordered).put("create_time", "2026-08-23T05:58:37.826Z");
+    var normalizer = new RowNormalizer(mapper);
+
+    assertThat(normalizer.ranking("contest-1", "problem-1", original).get("rowHash"))
+      .isEqualTo(normalizer.ranking("contest-1", "problem-1", reordered).get("rowHash"));
+  }
+
+  @Test
   void omitsVerboseCompilerLogsFromNormalizedTestcaseEvidence() throws Exception {
     var raw = mapper.readTree("""
       {"rank":1,"status":"Compile Error","user":{"_id":"user-1"},

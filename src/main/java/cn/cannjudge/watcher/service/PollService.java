@@ -81,15 +81,19 @@ public class PollService {
             String key = String.valueOf(row.get("teamKey"));
             if (!seen.add(key)) { alert("DUPLICATE_TEAM", "WARNING", contestId, problemId, key, "榜单存在重复队伍", "同一题目在一次采集中出现重复队伍键", Map.of("teamKey", key)); continue; }
             Map<String,Object> previous = repo.currentByKey(contestId, problemId, key);
-            if (previous == null || !String.valueOf(previous.get("row_hash")).equals(row.get("rowHash"))) {
-              // Existing databases may have hashes made before source aggregate scores were excluded.
-              // Refresh those current rows without manufacturing a one-off event for every team.
-              if (previous != null && sameStoredContent(previous, row)) {
+            if (previous == null) {
+              repo.insertRankingEvent(pollId, now, row, "UPSERT", repo.json(evidence(previous, row)));
+              repo.recordCaseBests(row, now);
+              repo.upsertCurrent(row, pollId, now); changed++;
+              evaluateChange(previous, row);
+            } else if (sameCaseEvidence(previous, row)) {
+              // Keep the latest official rank and submission metadata current, but do not turn a
+              // global score/rank recalculation into a per-team performance observation.
+              if (!String.valueOf(previous.get("row_hash")).equals(row.get("rowHash")) || !sameCurrentPresentation(previous, row)) {
                 repo.upsertCurrent(row, pollId, now);
-                rows++;
-                continue;
               }
-              repo.insertRankingEvent(pollId, now, row, previous == null ? "UPSERT" : "UPDATE", repo.json(evidence(previous, row)));
+            } else {
+              repo.insertRankingEvent(pollId, now, row, "UPDATE", repo.json(evidence(previous, row)));
               repo.recordCaseBests(row, now);
               repo.upsertCurrent(row, pollId, now); changed++;
               evaluateChange(previous, row);
@@ -156,12 +160,15 @@ public class PollService {
   private int threshold(String key, int fallback) { try { return Integer.parseInt(repo.settings().getOrDefault(key,String.valueOf(fallback))); } catch (Exception e) { return fallback; } }
   private void alert(String rule, String severity, String contest, String problem, String team, String title, String message, Map<String,Object> evidence) { repo.createAlert(rule,severity,contest,problem,team,title,message,repo.json(evidence),rule+":"+String.valueOf(contest)+":"+String.valueOf(problem)+":"+String.valueOf(team)); }
   private Integer number(Object v) { return v instanceof Number n ? n.intValue() : v == null ? null : Integer.valueOf(v.toString()); }
-  private boolean sameStoredContent(Map<String,Object> previous, Map<String,Object> row) {
+  private boolean sameCaseEvidence(Map<String,Object> previous, Map<String,Object> row) {
+    try { return mapper.readTree(String.valueOf(previous.get("result"))).equals(mapper.readTree(String.valueOf(row.get("resultJson")))); }
+    catch (Exception ignored) { return false; }
+  }
+  private boolean sameCurrentPresentation(Map<String,Object> previous, Map<String,Object> row) {
     String[][] fields = {{"team_id","teamId"},{"team_name","teamName"},{"user_id","userId"},{"user_nickname","userNickname"},{"submitter_id","submitterId"},{"submitter_nickname","submitterNickname"},{"submission_id","submissionId"},{"rank","rank"},{"status","status"}};
     for (String[] field : fields) if (!Objects.equals(value(previous.get(field[0])), value(row.get(field[1])))) return false;
     if (!Objects.equals(instant(previous.get("create_time")), instant(row.get("createTime")))) return false;
-    try { return mapper.readTree(String.valueOf(previous.get("result"))).equals(mapper.readTree(String.valueOf(row.get("resultJson")))); }
-    catch (Exception ignored) { return false; }
+    return true;
   }
   private String value(Object value) { return value == null ? null : String.valueOf(value); }
   private Instant instant(Object value) { if (value instanceof Timestamp timestamp) return timestamp.toInstant(); if (value instanceof Instant instant) return instant; return null; }

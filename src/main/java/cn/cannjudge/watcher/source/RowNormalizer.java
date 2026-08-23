@@ -43,7 +43,9 @@ public class RowNormalizer {
       item.put("status", text(r, "testcase_status"));
       results.add(item);
     });
-    row.put("result", results); row.put("resultJson", canonical(results)); row.put("rowHash", hash(row));
+    // A ranking row is an event only when its per-testcase evidence changes.  Official aggregate
+    // scores and rank may be recalculated globally while this team's submission stays identical.
+    row.put("result", results); row.put("resultJson", canonical(results)); row.put("rowHash", hash(results));
     return row;
   }
 
