@@ -169,13 +169,72 @@ public class WatcherRepository {
         (org.springframework.jdbc.core.RowCallbackHandler) rs -> problems.put(rs.getString(1), new LinkedHashMap<>(Map.of("rowCount", rs.getInt(2), "passCount", rs.getInt(3), "eventCount", 0))), contestId);
     jdbc.query("SELECT problem_id,COUNT(*) FROM ranking_event WHERE contest_id=? AND observed_at>=? GROUP BY problem_id",
         (org.springframework.jdbc.core.RowCallbackHandler) rs -> problems.computeIfAbsent(rs.getString(1), ignored -> new LinkedHashMap<>(Map.of("rowCount", 0, "passCount", 0, "eventCount", 0))).put("eventCount", rs.getInt(2)), contestId, sqlTime(from));
-    List<Map<String,Object>> activity = jdbc.queryForList("""
-      SELECT date_trunc('hour',observed_at) AS observed_at,COUNT(*) AS changes,
-        COUNT(*) FILTER (WHERE event_type='DELETE') AS deletes
-      FROM ranking_event WHERE contest_id=? AND observed_at>=?
-      GROUP BY date_trunc('hour',observed_at) ORDER BY observed_at
-      """, contestId, sqlTime(from));
-    return Map.of("problems", problems, "activity", activity);
+    return Map.of("problems", problems, "activity", performanceActivity(contestId, from));
+  }
+
+  private List<Map<String,Object>> performanceActivity(String contestId, Instant from) {
+    String sql = """
+      WITH ordered AS (
+        SELECT id,observed_at,event_type,result,
+          LAG(result) OVER (PARTITION BY contest_id,problem_id,team_key ORDER BY observed_at,id) AS previous_result
+        FROM ranking_event WHERE contest_id=?
+      )
+      SELECT date_trunc('hour',observed_at) AS observed_at,event_type,%s AS result,%s AS previous_result
+      FROM ordered WHERE observed_at>=? ORDER BY observed_at
+      """.formatted(compactResult("result"), compactResult("previous_result"));
+    Map<Timestamp,Map<String,Object>> buckets = new LinkedHashMap<>();
+    for (Map<String,Object> event : friendlyRows(jdbc.queryForList(sql, contestId, sqlTime(from)))) {
+      Timestamp observedAt = (Timestamp) event.get("observed_at");
+      Map<String,Object> bucket = buckets.computeIfAbsent(observedAt, ignored -> activityBucket(observedAt));
+      increment(bucket, "changes");
+      if ("DELETE".equals(event.get("event_type"))) { increment(bucket, "deletes"); continue; }
+      int direction = performanceDirection(event.get("result"), event.get("previous_result"));
+      if (direction > 0) increment(bucket, "improvements");
+      if (direction < 0) increment(bucket, "regressions");
+    }
+    return new ArrayList<>(buckets.values());
+  }
+
+  private Map<String,Object> activityBucket(Timestamp observedAt) {
+    Map<String,Object> bucket = new LinkedHashMap<>();
+    bucket.put("observed_at", observedAt); bucket.put("changes", 0); bucket.put("deletes", 0);
+    bucket.put("improvements", 0); bucket.put("regressions", 0);
+    return bucket;
+  }
+
+  private void increment(Map<String,Object> bucket, String key) { bucket.put(key, ((Number) bucket.get(key)).intValue() + 1); }
+
+  private int performanceDirection(Object currentValue, Object previousValue) {
+    if (previousValue == null) return 0;
+    Map<String,com.fasterxml.jackson.databind.JsonNode> previous = testcaseMap(previousValue);
+    int improvements = 0, regressions = 0;
+    for (var entry : testcaseMap(currentValue).entrySet()) {
+      var old = previous.get(entry.getKey()); if (old == null) continue;
+      BigDecimal current = passedTime(entry.getValue()), prior = passedTime(old);
+      if (current != null && prior != null) { int compare = current.compareTo(prior); if (compare < 0) improvements++; if (compare > 0) regressions++; }
+      else if (current != null && prior == null) improvements++;
+      else if (current == null && prior != null) regressions++;
+    }
+    return Integer.compare(improvements, regressions);
+  }
+
+  private Map<String,com.fasterxml.jackson.databind.JsonNode> testcaseMap(Object raw) {
+    Map<String,com.fasterxml.jackson.databind.JsonNode> testcases = new LinkedHashMap<>();
+    try {
+      com.fasterxml.jackson.databind.JsonNode result = raw instanceof com.fasterxml.jackson.databind.JsonNode node ? node : mapper.readTree(String.valueOf(raw));
+      if (!result.isArray()) return testcases;
+      for (var testcase : result) {
+        String id = testcase.path("testcaseId").asText(testcase.path("testcase_id").asText(""));
+        if (!id.isBlank()) testcases.put(id, testcase);
+      }
+    } catch (Exception ignored) { }
+    return testcases;
+  }
+
+  private BigDecimal passedTime(com.fasterxml.jackson.databind.JsonNode testcase) {
+    String status = testcase.path("status").asText(testcase.path("testcase_status").asText(""));
+    if (!"Pass".equals(status) || !testcase.path("time").isNumber()) return null;
+    BigDecimal time = testcase.path("time").decimalValue(); return time.signum() > 0 ? time : null;
   }
 
   public void upsertCurrent(Map<String,Object> row, long pollId, Instant at) {
