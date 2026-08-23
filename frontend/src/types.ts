@@ -22,7 +22,7 @@ export type Ranking = {
   submitter_nickname?: string; rank?: number; status?: string; create_time?: string
   result?: Array<{ time?: number; status?: string; testcaseId?: string; precisionRatio?: number }>
   previous_result?: Array<{ time?: number; status?: string; testcaseId?: string; precisionRatio?: number }>
-  observed_at?: string; updated_at?: string; previousRank?: number; record_count?: number
+  observed_at?: string; updated_at?: string; previous_rank?: number; record_count?: number
 }
 export type CaseBestSummary = { global: Record<string, number>; teams: Record<string, Record<string, number>> }
 export type RankingResponse = { items: Ranking[]; caseBests: CaseBestSummary }
