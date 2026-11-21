@@ -213,7 +213,7 @@ export default function ParticipationView({
                 <h2 id="participation-results">筛选结果</h2>
                 <p>
                   {items.length} 个账号 · 公开总榜覆盖 {data.coveredContests}/
-                  {data.eligibleContests} 个赛段 · 用户记录 {data.userCoveredContests ?? 0} 段
+                  {data.eligibleContests} 个赛段 · 用户记录 {data.userCoveredContests ?? 0} 段 · Watcher 观测 {data.observedContests ?? 0} 段 · 有提交统计 {data.totalSubmissionsContests ?? 0} 段
                 </p>
               </div>
               <Input
