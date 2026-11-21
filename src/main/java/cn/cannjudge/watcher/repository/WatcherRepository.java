@@ -242,9 +242,11 @@ public class WatcherRepository {
     return friendlyRows(jdbc.queryForList(sql.toString(), args.toArray()));
   }
 
-  public Map<String,Object> currentByKey(String contestId, String problemId, String teamKey) {
-    List<Map<String,Object>> rows = jdbc.queryForList("SELECT * FROM ranking_current WHERE contest_id=? AND problem_id=? AND team_key=?", contestId, problemId, teamKey);
-    return rows.isEmpty() ? null : rows.getFirst();
+  public Map<String,Map<String,Object>> currentRowsByTeam(String contestId, String problemId) {
+    Map<String,Map<String,Object>> teams = new LinkedHashMap<>();
+    jdbc.queryForList("SELECT * FROM ranking_current WHERE contest_id=? AND problem_id=?", contestId, problemId)
+        .forEach(row -> teams.put((String) row.get("team_key"), row));
+    return teams;
   }
 
   public void insertRankingEvent(long pollId, Instant at, Map<String,Object> row, String eventType, String evidenceJson) {
@@ -478,7 +480,6 @@ public class WatcherRepository {
 
   public void deleteCurrent(String contestId, String problemId, String teamKey) { jdbc.update("DELETE FROM ranking_current WHERE contest_id=? AND problem_id=? AND team_key=?", contestId, problemId, teamKey); }
 
-  public List<Map<String,Object>> currentKeys(String contestId, String problemId) { return jdbc.queryForList("SELECT team_key,row_hash FROM ranking_current WHERE contest_id=? AND problem_id=?", contestId, problemId); }
 
   public void insertStatsEvent(long pollId, Instant at, Map<String,Object> s) {
     jdbc.update("INSERT INTO problem_stats_event(poll_id,observed_at,contest_id,problem_id,attempt_count,pass_user_count,pass_count,wrong_count,fail_count,submission_count,row_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)",

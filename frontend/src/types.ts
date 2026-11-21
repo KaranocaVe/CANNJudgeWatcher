@@ -28,6 +28,7 @@ export type CaseBestSummary = { global: Record<string, number>; teams: Record<st
 export type RankingResponse = { items: Ranking[]; caseBests: CaseBestSummary; activeCaseSetId?: string | null }
 export type HistoryResponse = { items: HistoryPoint[]; caseBests?: CaseBestSummary }
 export type ContestOverview = {
+  openAlerts?: number
   problems: Record<string, { rowCount: number; passCount: number; eventCount: number }>
   activity: Array<{ observed_at: string; changes: number; deletes: number; improvements?: number; regressions?: number }>
 }
@@ -43,3 +44,6 @@ export type ProblemStats = { observed_at?: string; attempt_count?: number; pass_
 export type PollRun = { id: number; started_at?: string; finished_at?: string; status: 'RUNNING' | 'SUCCESS' | 'FAILED'; contests_seen?: number; contests_polled?: number | null; rows_seen?: number; changed_rows?: number; response_hash?: string; error_message?: string }
 export type Alert = { id: number; createdAt: string; acknowledgedAt?: string; ruleCode: string; severity: string; contestId?: string; problemId?: string; teamKey?: string; title: string; message: string; evidence?: Record<string, unknown> }
 export type Summary = { successful?: number; failed?: number; last_finished?: string; activeContests?: number; openAlerts?: number; latestPoll?: PollRun[] }
+
+export type SelectedUser = { id?: string; nickname?: string; name: string }
+export type SelectedPerformance = { contestId: string; contestTitle: string; problemId: string; problemTitle: string; teamKey: string; teamName: string }

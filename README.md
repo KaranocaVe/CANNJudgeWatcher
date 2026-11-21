@@ -1,6 +1,6 @@
 # CANNJudge Watcher
 
-CANNJudge Watcher 是一个面向公开赛事的榜单监控与分析平台：自动发现公开且未结束的赛事，按周期采集题目排名，将变化写入无损事件历史，并提供官方名次、逐测试点耗时、采集健康度和站内告警。前端采用 React + TypeScript + HeroUI（Tailwind CSS 4 官方主题链路）+ Apache ECharts，布局以紧凑监控控制台为中心。
+CANNJudge Watcher 是一个面向公开赛事的榜单监控与分析平台：自动发现公开且未结束的赛事，按周期采集题目排名，将变化写入无损事件历史，并提供官方名次、逐测试点耗时、采集健康度和站内告警。前端采用 React、TypeScript 和按需加载的 Apache ECharts。榜单和测试点历史按页渲染，宽表可横向滚动并固定标识列。
 
 ## 本地开发
 

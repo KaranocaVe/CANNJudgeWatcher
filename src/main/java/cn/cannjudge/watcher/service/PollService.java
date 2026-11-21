@@ -89,13 +89,14 @@ public class PollService {
       if (groupId == null) throw new CannJudgeClient.SourceException("public group has no _id");
       List<JsonNode> contests = source.contests(groupId);
       Instant now = clock.instant();
+      int configuredInterval = repo.settingInt("default_poll_interval_seconds", defaultInterval, 60, 1800);
       for (JsonNode contest : contests) {
         String contestId = CannJudgeClient.text(contest, "_id"); if (contestId == null) continue;
         Instant start = CannJudgeClient.instant(contest.get("start_time"));
         Instant end = CannJudgeClient.instant(contest.get("end_time"));
         String contestStatus = state(start, end, now);
         Map<String,Object> metadata = contestMetadata(contest, contestStatus, now);
-        repo.upsertContest(metadata, contestStatus, repo.settingInt("default_poll_interval_seconds", defaultInterval, 60, 1800));
+        repo.upsertContest(metadata, contestStatus, configuredInterval);
         contestsSeen++;
         if ("ENDED".equals(contestStatus)) continue;
         Map<String,String> problemCaseSets = new LinkedHashMap<>();
@@ -120,7 +121,9 @@ public class PollService {
           repo.upsertProblem(problemId, contestId, problemSlug(problem), problemTitle(problem, problemId), difficulty(problem),
               tags(problem), hash(problem), problemCaseSets.get(problemId));
         }
-        if (!"ACTIVE".equals(contestStatus) || !isEnabled(contestId) || (!force && !isDue(contestId, now))) continue;
+        if (!"ACTIVE".equals(contestStatus)) continue;
+        Map<String,Object> monitoring = repo.findContestRow(contestId);
+        if (!Boolean.TRUE.equals(monitoring.get("monitoring_enabled")) || (!force && !isDue(monitoring, now))) continue;
         contestsPolled++;
         Map<String,Map<String,Object>> stats = fetchStats(contestId);
         for (JsonNode p : contest.path("problems")) {
@@ -141,11 +144,12 @@ public class PollService {
           Map<String,String> knownCaseSets = historicalCaseSets;
           List<Map<String,Object>> normalizedRanking = ranking.stream()
               .map(raw -> normalizer.ranking(contestId, problemId, raw, caseSetId, officialCaseIds, knownCaseSets)).toList();
+          Map<String,Map<String,Object>> remaining = repo.currentRowsByTeam(contestId, problemId);
           Set<String> seen = new HashSet<>();
           for (Map<String,Object> row : normalizedRanking) {
             String key = String.valueOf(row.get("teamKey"));
             if (!seen.add(key)) { alert("DUPLICATE_TEAM", "WARNING", contestId, problemId, key, "榜单存在重复队伍", "同一题目在一次采集中出现重复队伍键", Map.of("teamKey", key)); continue; }
-            Map<String,Object> previous = repo.currentByKey(contestId, problemId, key);
+            Map<String,Object> previous = remaining.remove(key);
             if (previous == null) {
               repo.insertRankingEvent(pollId, now, row, "UPSERT", repo.json(evidence(previous, row)));
               repo.recordCaseBests(row, now);
@@ -165,12 +169,11 @@ public class PollService {
             }
             rows++;
           }
-          for (Map<String,Object> old : repo.currentKeys(contestId, problemId)) {
-            String key = String.valueOf(old.get("team_key"));
-            if (!seen.contains(key)) {
-              Map<String,Object> previous = repo.currentByKey(contestId, problemId, key);
-              if (previous != null) { Map<String,Object> deleted = databaseRow(contestId, problemId, previous); repo.insertRankingEvent(pollId, now, deleted, "DELETE", repo.json(Map.of("reason", "missing_from_source"))); repo.deleteCurrent(contestId, problemId, key); changed++; }
-            }
+          for (Map.Entry<String,Map<String,Object>> missing : remaining.entrySet()) {
+            Map<String,Object> deleted = databaseRow(contestId, problemId, missing.getValue());
+            repo.insertRankingEvent(pollId, now, deleted, "DELETE", repo.json(Map.of("reason", "missing_from_source")));
+            repo.deleteCurrent(contestId, problemId, missing.getKey());
+            changed++;
           }
           Map<String,Object> stat = stats.get(problemId);
           if (stat != null) {
@@ -208,6 +211,9 @@ public class PollService {
       if (!response.has("total") && pageRows.size() < pageSize) break;
       if (response.get("rows").isEmpty() || ++page > 1000) break;
     }
+    if (total != Integer.MAX_VALUE && all.size() < total) {
+      throw new CannJudgeClient.SourceException("incomplete ranking for " + problemId + ": " + all.size() + "/" + total);
+    }
     return all;
   }
 
@@ -224,8 +230,7 @@ public class PollService {
   private String hash(JsonNode p) { try { return Integer.toHexString(p.toString().hashCode()); } catch (Exception e) { return ""; } }
   private String first(JsonNode n, String... fields) { for (String f : fields) { String s = CannJudgeClient.text(n, f); if (s != null && !s.isBlank()) return s; } return null; }
   private String state(Instant start, Instant end, Instant now) { if (end != null && !end.isAfter(now)) return "ENDED"; if (start != null && start.isAfter(now)) return "UPCOMING"; return "ACTIVE"; }
-  private boolean isEnabled(String id) { return Boolean.TRUE.equals(repo.findContestRow(id).get("monitoring_enabled")); }
-  private boolean isDue(String id, Instant now) { Map<String,Object> row = repo.findContestRow(id); Object last = row.get("last_poll_at"); int interval = ((Number)row.get("poll_interval_seconds")).intValue(); return last == null || !((java.sql.Timestamp)last).toInstant().plusSeconds(interval).isAfter(now); }
+  private boolean isDue(Map<String,Object> row, Instant now) { Object last = row.get("last_poll_at"); int interval = ((Number)row.get("poll_interval_seconds")).intValue(); return last == null || !((java.sql.Timestamp)last).toInstant().plusSeconds(interval).isAfter(now); }
   private Map<String,Object> contestMetadata(JsonNode c, String status, Instant now) { Map<String,Object> m = new LinkedHashMap<>(); m.put("id", CannJudgeClient.text(c,"_id")); m.put("slug", first(c,"name","slug")); m.put("title", first(c,"title","name")); m.put("description", CannJudgeClient.text(c,"desc")); m.put("startTime", CannJudgeClient.instant(c.get("start_time"))); m.put("endTime", CannJudgeClient.instant(c.get("end_time"))); m.put("sourceOngoing", c.path("ongoing").asBoolean(false)); m.put("sourceStatus", status); m.put("sourceHash", Integer.toHexString(c.toString().hashCode())); return m; }
   private Map<String,Object> evidence(Map<String,Object> previous, Map<String,Object> row) { Map<String,Object> e = new LinkedHashMap<>(); if (previous != null) { e.put("previousRank", previous.get("rank")); e.put("previousStatus", previous.get("status")); } e.put("rank", row.get("rank")); return e; }
   private Map<String,Object> databaseRow(String contestId, String problemId, Map<String,Object> p) { Map<String,Object> row = new LinkedHashMap<>(); row.put("contestId",contestId);row.put("problemId",problemId);row.put("teamKey",p.get("team_key"));row.put("teamId",p.get("team_id"));row.put("teamName",p.get("team_name"));row.put("userId",p.get("user_id"));row.put("userNickname",p.get("user_nickname"));row.put("submitterId",p.get("submitter_id"));row.put("submitterNickname",p.get("submitter_nickname"));row.put("submissionId",p.get("submission_id"));row.put("rank",p.get("rank"));row.put("status",p.get("status"));row.put("createTime",p.get("create_time"));row.put("resultJson",String.valueOf(p.getOrDefault("result","[]")));row.put("rowHash",p.get("row_hash"));return row; }
