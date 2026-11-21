@@ -49,6 +49,7 @@ export default function RankingEvidence({
   bests,
   selectedCase,
   allVersions,
+  inline = false,
   onClose,
   onProfile,
 }: {
@@ -57,6 +58,7 @@ export default function RankingEvidence({
   bests: CaseBestSummary
   selectedCase: string
   allVersions: boolean
+  inline?: boolean
   onClose: () => void
   onProfile: () => void
 }) {
@@ -67,27 +69,25 @@ export default function RankingEvidence({
     node?.showModal()
     return () => node?.close()
   }, [])
-  return (
-    <dialog
-      className="case-drawer"
-      ref={dialog}
-      aria-labelledby="team-detail"
-      onCancel={onClose}
-    >
+  const titleId = inline ? 'inline-team-detail' : 'team-detail'
+  const content = (
+    <>
       <div className="drawer-head">
         <div>
           <div className="drawer-kicker">
             <span>{row.rank == null ? '未排名' : `#${row.rank}`}</span>
             <Status value={row.status} />
           </div>
-          <h2 id="team-detail">{nameOf(row)}</h2>
+          <h2 id={titleId}>{nameOf(row)}</h2>
           {row.submitter_nickname && row.submitter_nickname !== nameOf(row) && (
             <p>{row.submitter_nickname}</p>
           )}
         </div>
-        <Button onClick={onClose} aria-label="关闭测试点详情">
-          <X size={19} />
-        </Button>
+        {!inline && (
+          <Button onClick={onClose} aria-label="关闭测试点详情">
+            <X size={19} />
+          </Button>
+        )}
       </div>
       <div className="drawer-body">
         <div className="drawer-meta">
@@ -121,12 +121,13 @@ export default function RankingEvidence({
                 <li key={id} data-selected={id === selectedCase}>
                   <div className="reading-main">
                     <span>
-                      用例 {index + 1}
+                      用例 {String(index + 1).padStart(2, '0')}
                       {allVersions && caseVersionLabel(id) && (
                         <small> · {caseVersionLabel(id)}</small>
                       )}
                     </span>
                     <strong>
+                      <span className="case-current-label">本次</span>{' '}
                       <CaseReading item={item} />
                     </strong>
                   </div>
@@ -135,6 +136,18 @@ export default function RankingEvidence({
                     timeValue(item.time) != null && (
                       <span>{statusLabel(item.status)}</span>
                     )}
+                  {before && (
+                    <span>
+                      上次{' '}
+                      <b>
+                        <CaseReading item={before} />
+                      </b>
+                      {before.status &&
+                        before.status !== 'Pass' &&
+                        timeValue(before.time) != null &&
+                        ` · ${statusLabel(before.status)}`}
+                    </span>
+                  )}
                   <div className="reading-bests">
                     <span>
                       队伍最佳{' '}
@@ -149,6 +162,11 @@ export default function RankingEvidence({
                       </b>
                     </span>
                   </div>
+                  {inline && id === selectedCase && (
+                    <span className="reading-key">
+                      ● 本次 · ○ 上次（标尺仅绘制通过耗时）
+                    </span>
+                  )}
                   {item && (
                     <span className={caseDeltaClass(item, before)}>
                       {caseDeltaText(item, before)}
@@ -162,6 +180,24 @@ export default function RankingEvidence({
           <p>这条榜单记录没有测试点成绩。</p>
         )}
       </div>
+    </>
+  )
+  return inline ? (
+    <section
+      className="inline-evidence"
+      id="rank-inline-evidence"
+      aria-labelledby={titleId}
+    >
+      {content}
+    </section>
+  ) : (
+    <dialog
+      className="case-drawer"
+      ref={dialog}
+      aria-labelledby={titleId}
+      onCancel={onClose}
+    >
+      {content}
     </dialog>
   )
 }

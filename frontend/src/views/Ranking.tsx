@@ -30,7 +30,12 @@ import {
   Timestamp,
 } from '../ui'
 import { useResource } from '../useResource'
-import LatencyDistribution from './LatencyDistribution'
+import {
+  LatencyAxis,
+  LatencyMarks,
+  latencyScale,
+  passedTime,
+} from './LatencyPlot'
 import RankingEvidence, {
   CaseReading,
   nameOf,
@@ -84,6 +89,7 @@ export default function RankingView({
   const [inspectedTeam, setInspectedTeam] = useState<IndexedRanking | null>(
     null,
   )
+  const [expandedKey, setExpandedKey] = useState('')
   const deferredQuery = useDeferredValue(query.trim().toLowerCase())
   const fetchRankings = useCallback(
     (signal: AbortSignal) => api.rankings(contest.id, problemId, {}, signal),
@@ -168,15 +174,31 @@ export default function RankingView({
   const selectedLabel = caseOptions.find(
     (item) => item.id === selectedCase,
   )?.label
-  const values = useMemo(
-    () =>
-      model.indexed.flatMap(({ current }) => {
-        const item = current.get(selectedCase)
-        const time = timeValue(item?.time)
-        return item?.status === 'Pass' && time != null ? [time] : []
-      }),
-    [model.indexed, selectedCase],
-  )
+  const comparison = useMemo(() => {
+    const values: number[] = []
+    let fastest: { row: IndexedRanking['row']; time: number } | undefined
+    let samples = 0
+    for (const { row, current, previous } of model.indexed) {
+      const time = passedTime(current.get(selectedCase))
+      const prior = passedTime(previous.get(selectedCase))
+      if (time != null) {
+        values.push(time)
+        samples++
+        if (!fastest || time < fastest.time) fastest = { row, time }
+      }
+      if (prior != null) values.push(prior)
+    }
+    return { scale: latencyScale(values), fastest, samples }
+  }, [model.indexed, selectedCase])
+  const scale = comparison.scale
+
+  function openProfile({ row }: IndexedRanking) {
+    onUserSelect({
+      id: row.user_id,
+      nickname: row.user_nickname,
+      name: row.user_nickname || nameOf(row),
+    })
+  }
 
   const problem = problems.find((item) => item.id === problemId)
   if (!problem)
@@ -201,6 +223,7 @@ export default function RankingView({
                 setAllVersionsFor('')
                 setCaseSelection('')
                 setInspectedTeam(null)
+                setExpandedKey('')
                 onProblemChange(event.target.value)
               }}
             >
@@ -217,7 +240,7 @@ export default function RankingView({
               <dd>{data ? model.indexed.length : '—'}</dd>
             </div>
             <div>
-              <dt>通过</dt>
+              <dt>整题通过</dt>
               <dd>{data ? model.passing : '—'}</dd>
             </div>
             <div>
@@ -228,12 +251,6 @@ export default function RankingView({
             </div>
           </dl>
         </div>
-        <LatencyDistribution
-          selected={selectedCase}
-          cases={caseOptions}
-          values={values}
-          onSelect={setCaseSelection}
-        />
       </div>
 
       <section className="ranking-results" aria-labelledby="ranking-title">
@@ -281,7 +298,7 @@ export default function RankingView({
                 aria-pressed={mode === 'list'}
                 onClick={() => setMode('list')}
               >
-                <List size={15} /> <span>列表</span>
+                <List size={15} /> <span>单点比较</span>
               </button>
               <button
                 type="button"
@@ -314,8 +331,40 @@ export default function RankingView({
             </div>
           </div>
         )}
+        {mode === 'list' && caseOptions.length > 0 && (
+          <div className="comparison-caption">
+            <SelectField
+              aria-label="选择对比用例"
+              value={selectedCase}
+              onChange={(event) => setCaseSelection(event.target.value)}
+            >
+              {caseOptions.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </SelectField>
+            {comparison.fastest ? (
+              <p>
+                本次通过该用例的 <strong>{comparison.samples}</strong>{' '}
+                支队伍中，
+                <strong>{nameOf(comparison.fastest.row)}</strong>用时最短
+                <span className="caption-time">
+                  {' '}
+                  {formatMetric(comparison.fastest.time)} μs
+                </span>
+                。
+              </p>
+            ) : (
+              <p>当前用例暂无已通过的耗时记录。</p>
+            )}
+          </div>
+        )}
         {mode === 'matrix' && cases.length > 0 && (
-          <div className="matrix-legend"><span aria-hidden="true" />色阶表示通过耗时相对全场历史最佳的倍数</div>
+          <div className="matrix-legend">
+            <span aria-hidden="true" />
+            色阶表示通过耗时相对全场历史最佳的倍数
+          </div>
         )}
         {error && (
           <div className="error-line" role="alert">
@@ -341,34 +390,43 @@ export default function RankingView({
             {(visible) =>
               mode === 'list' ? (
                 <div className="results-list">
-                  <div className="result-row result-labels" aria-hidden="true">
-                    <span>名次</span>
+                  <div className="result-row result-labels">
+                    <span>官方名次</span>
                     <span>队伍 / 提交者</span>
-                    <span>状态</span>
-                    <span>
-                      {selectedLabel ? `${selectedLabel}耗时` : '耗时'}
-                    </span>
+                    <span>提交状态</span>
+                    <div className="result-plot-heading">
+                      <span>
+                        {selectedLabel ?? '用例'} · 通过耗时（μs
+                        {scale ? '，对数轴' : ''}）
+                      </span>
+                      {scale && <LatencyAxis scale={scale} />}
+                    </div>
+                    <span className="result-value-heading">本次耗时</span>
                     <span />
                   </div>
                   <ol aria-label="官方名次列表">
                     {visible.map((indexed) => {
-                      const { row, current } = indexed
+                      const { row, current, previous } = indexed
+                      const item = current.get(selectedCase)
+                      const prior = previous.get(selectedCase)
+                      const rowKey =
+                        row.team_key ?? `${nameOf(row)}-${row.rank}`
+                      const expanded = expandedKey === rowKey
                       return (
-                        <li key={row.team_key ?? `${nameOf(row)}-${row.rank}`}>
+                        <li key={rowKey} data-expanded={expanded}>
                           <button
                             className="result-row result-item"
-                            data-podium={row.rank != null && row.rank <= 3}
-                            data-leader={row.rank === 1}
                             type="button"
-                            onClick={() => setInspectedTeam(indexed)}
-                            aria-haspopup="dialog"
+                            aria-expanded={expanded}
+                            aria-controls={
+                              expanded ? 'rank-inline-evidence' : undefined
+                            }
+                            onClick={() =>
+                              setExpandedKey(expanded ? '' : rowKey)
+                            }
                           >
                             <span className="result-rank">
-                              <strong>
-                                {row.rank == null
-                                  ? '—'
-                                  : String(row.rank).padStart(2, '0')}
-                              </strong>
+                              <strong>{row.rank ?? '—'}</strong>
                               <RankMovement
                                 rank={row.rank}
                                 previous={row.previous_rank}
@@ -388,15 +446,45 @@ export default function RankingView({
                             <span className="result-state">
                               <Status value={row.status} />
                             </span>
+                            <span className="result-plot">
+                              {scale && (
+                                <LatencyMarks
+                                  scale={scale}
+                                  current={passedTime(item)}
+                                  previous={expanded ? passedTime(prior) : null}
+                                  selected={expanded}
+                                  reference={
+                                    !expanded && row === comparison.fastest?.row
+                                  }
+                                />
+                              )}
+                            </span>
                             <span className="result-time">
-                              <CaseReading item={current.get(selectedCase)} />
+                              <CaseReading item={item} />
+                              {item?.status &&
+                                item.status !== 'Pass' &&
+                                timeValue(item.time) != null && (
+                                  <small>{statusLabel(item.status)}</small>
+                                )}
                             </span>
                             <ArrowRight
                               className="result-arrow"
-                              size={17}
+                              size={16}
                               aria-hidden
                             />
                           </button>
+                          {expanded && (
+                            <RankingEvidence
+                              inline
+                              indexed={indexed}
+                              cases={cases}
+                              bests={bests}
+                              selectedCase={selectedCase}
+                              allVersions={allVersions}
+                              onClose={() => setExpandedKey('')}
+                              onProfile={() => openProfile(indexed)}
+                            />
+                          )}
                         </li>
                       )
                     })}
@@ -554,15 +642,7 @@ export default function RankingView({
           selectedCase={selectedCase}
           allVersions={allVersions}
           onClose={() => setInspectedTeam(null)}
-          onProfile={() => {
-            const row = inspectedTeam.row
-            setInspectedTeam(null)
-            onUserSelect({
-              id: row.user_id,
-              nickname: row.user_nickname,
-              name: row.user_nickname || nameOf(row),
-            })
-          }}
+          onProfile={() => openProfile(inspectedTeam)}
         />
       )}
     </div>
