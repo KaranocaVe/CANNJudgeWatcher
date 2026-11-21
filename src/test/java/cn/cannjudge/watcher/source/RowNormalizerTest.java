@@ -149,4 +149,17 @@ class RowNormalizerTest {
     assertThat(normalizer.ranking("contest-1", "problem-1", first).get("teamKey"))
         .isEqualTo(normalizer.ranking("contest-1", "problem-1", moved).get("teamKey"));
   }
+
+  @Test
+  void acceptsCurrentPublicRankingShapeWithFlatUserAndNestedSubmission() throws Exception {
+    var raw = mapper.readTree("""
+      {"rank":1,"user_id":"user-1","user":{"_id":"user-1","nickname":"alice"},
+       "submission_id":"submission-1","submission":{"_id":"submission-1","status":"Pass","create_time":"2026-11-20T13:43:07.789Z"},
+       "status":"Pass","result":[{"testcase_id":"case-1","time":1.5,"testcase_status":"Pass"}]}
+      """);
+    var normalized = new RowNormalizer(mapper).ranking("contest-1", "problem-1", raw);
+    assertThat(normalized.get("teamKey")).isEqualTo("user:user-1");
+    assertThat(normalized.get("submitterId")).isEqualTo("user-1");
+    assertThat(normalized.get("createTime")).isNotNull();
+  }
 }

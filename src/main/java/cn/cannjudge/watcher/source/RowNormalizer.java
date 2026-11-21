@@ -32,27 +32,36 @@ public class RowNormalizer {
     JsonNode user = raw.path("user");
     JsonNode submitter = raw.path("submitter");
     JsonNode submission = raw.path("submission");
-    String teamId = text(team, "_id");
-    String userId = text(user, "_id");
+    String teamId = firstText(team, "_id", "id", "team_id");
+    String userId = firstText(user, "_id", "id");
+    if (userId == null) userId = firstText(raw, "user_id", "userId");
     String teamKey;
     if (teamId != null) teamKey = "team:" + teamId;
     else if (userId != null) teamKey = "user:" + userId;
     else {
-      String stableName = text(team, "team_name");
-      if (stableName == null || stableName.isBlank()) stableName = text(user, "nickname");
-      if (stableName == null || stableName.isBlank()) stableName = text(submitter, "nickname");
+      String stableName = firstText(team, "team_name", "name");
+      if (stableName == null || stableName.isBlank()) stableName = firstText(user, "nickname", "name");
+      if (stableName == null || stableName.isBlank()) stableName = firstText(submitter, "nickname", "name");
+      if (stableName == null || stableName.isBlank()) stableName = firstText(raw, "user_nickname", "nickname");
       if (stableName == null || stableName.isBlank()) throw new IllegalArgumentException("ranking row has no stable team or user identity");
       teamKey = "name:" + stableName.trim();
     }
     row.put("contestId", contestId); row.put("problemId", problemId); row.put("teamKey", teamKey);
-    row.put("teamId", teamId); row.put("teamName", text(team, "team_name"));
-    row.put("userId", userId); row.put("userNickname", text(user, "nickname"));
-    row.put("submitterId", text(submitter, "_id")); row.put("submitterNickname", text(submitter, "nickname"));
+    row.put("teamId", teamId); row.put("teamName", firstText(team, "team_name", "name"));
+    row.put("userId", userId); row.put("userNickname", firstText(user, "nickname", "name", "user_nickname"));
+    String submitterId = firstText(submitter, "_id", "id");
+    if (submitterId == null) submitterId = firstText(submission, "user_id");
+    if (submitterId == null) submitterId = userId;
+    String submitterNickname = firstText(submitter, "nickname", "name");
+    if (submitterNickname == null) submitterNickname = firstText(submission, "user_nickname");
+    if (submitterNickname == null) submitterNickname = firstText(user, "nickname");
+    row.put("submitterId", submitterId); row.put("submitterNickname", submitterNickname);
     row.put("submissionId", text(raw, "submission_id"));
     row.put("rank", integer(raw, "rank")); row.put("status", text(raw, "status"));
     // The CANNJudge aggregate score is relative to a moving global baseline.  Do not retain it
     // or include it in the change hash: another team's run can change it for every leaderboard row.
-    row.put("createTime", CannJudgeClient.instant(raw.get("create_time")));
+    JsonNode createTime = raw.has("create_time") ? raw.get("create_time") : submission.get("create_time");
+    row.put("createTime", CannJudgeClient.instant(createTime));
     List<Map<String,Object>> results = new ArrayList<>();
     JsonNode rawResults = raw.path("result");
     Set<String> currentIds = officialTestcaseIds == null ? Set.of() : officialTestcaseIds;
@@ -116,5 +125,12 @@ public class RowNormalizer {
   }
   private String hex(byte[] bytes) { StringBuilder b = new StringBuilder(); for (byte x : bytes) b.append(String.format("%02x", x)); return b.toString(); }
   private String text(JsonNode node, String field) { return CannJudgeClient.text(node, field); }
+  private String firstText(JsonNode node, String... fields) {
+    for (String field : fields) {
+      String value = text(node, field);
+      if (value != null && !value.isBlank()) return value;
+    }
+    return null;
+  }
   private Integer integer(JsonNode node, String field) { return node.hasNonNull(field) ? node.get(field).asInt() : null; }
 }

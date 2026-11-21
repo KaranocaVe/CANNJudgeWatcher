@@ -383,13 +383,20 @@ public class WatcherRepository {
 
   private List<Map<String,Object>> performanceActivity(String contestId, Instant from) {
     String sql = """
-      WITH seed AS (
-        SELECT DISTINCT ON (problem_id,team_key) id,problem_id,team_key,observed_at,event_type,result
-        FROM ranking_event WHERE contest_id=? AND observed_at<?
-        ORDER BY problem_id,team_key,observed_at DESC,id DESC
-      ), recent AS (
+      WITH recent AS (
         SELECT id,problem_id,team_key,observed_at,event_type,result
         FROM ranking_event WHERE contest_id=? AND observed_at>=?
+      ), teams AS (
+        SELECT DISTINCT problem_id,team_key FROM recent
+      ), seed AS (
+        SELECT prior.id,teams.problem_id,teams.team_key,prior.observed_at,prior.event_type,prior.result
+        FROM teams
+        CROSS JOIN LATERAL (
+          SELECT id,observed_at,event_type,result
+          FROM ranking_event
+          WHERE contest_id=? AND problem_id=teams.problem_id AND team_key=teams.team_key AND observed_at<?
+          ORDER BY observed_at DESC,id DESC LIMIT 1
+        ) prior
       ), ordered AS (
         SELECT id,observed_at,event_type,result,
           LAG(result) OVER (PARTITION BY problem_id,team_key ORDER BY observed_at,id) AS previous_result
