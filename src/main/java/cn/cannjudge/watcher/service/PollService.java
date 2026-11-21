@@ -17,6 +17,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -32,6 +36,12 @@ public class PollService {
   private final int defaultInterval;
   private final int pageSize;
   private final AtomicBoolean running = new AtomicBoolean();
+  private final AtomicBoolean manualQueued = new AtomicBoolean();
+  private final ExecutorService manualPollExecutor = Executors.newSingleThreadExecutor(r -> {
+    Thread thread = new Thread(r, "cannjudge-manual-poll");
+    thread.setDaemon(true);
+    return thread;
+  });
 
   public PollService(CannJudgeClient source, WatcherRepository repo, ObjectMapper mapper, Clock clock,
       @Value("${cannjudge.default-poll-interval-seconds:120}") int defaultInterval,
@@ -41,16 +51,39 @@ public class PollService {
   }
 
   @Scheduled(fixedDelayString = "${cannjudge.scheduler-tick-seconds:30}000", initialDelayString = "5000")
-  public void scheduledPoll() { run(false); }
+  public void scheduledPoll() { if (!manualQueued.get()) run(false); }
 
-  public boolean runNow() { return run(true); }
+  public boolean runNow() {
+    if (!manualQueued.compareAndSet(false, true)) return false;
+    if (running.get()) { manualQueued.set(false); return false; }
+    try {
+      manualPollExecutor.submit(() -> { try { run(true); } finally { manualQueued.set(false); } });
+      return true;
+    } catch (RuntimeException ex) {
+      manualQueued.set(false);
+      return false;
+    }
+  }
+
+  @PreDestroy
+  void shutdown() {
+    manualPollExecutor.shutdownNow();
+    try { manualPollExecutor.awaitTermination(2, TimeUnit.SECONDS); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+  }
 
   @Transactional
   public boolean run(boolean force) {
     if (!running.compareAndSet(false, true)) return false;
-    Instant started = clock.instant(); long pollId = repo.createPollRun(started);
-    int contestsSeen = 0, rows = 0, changed = 0; String error = null; String status = "SUCCESS";
     try {
+      if (!repo.tryAcquirePollLock()) { running.set(false); return false; }
+    } catch (RuntimeException ex) {
+      running.set(false);
+      throw ex;
+    }
+    Instant started = clock.instant(); long pollId = -1;
+    int contestsSeen = 0, contestsPolled = 0, rows = 0, changed = 0; String error = null; String status = "SUCCESS";
+    try {
+      pollId = repo.createPollRun(started);
       JsonNode group = source.publicGroup();
       String groupId = CannJudgeClient.text(group, "_id");
       if (groupId == null) throw new CannJudgeClient.SourceException("public group has no _id");
@@ -62,20 +95,52 @@ public class PollService {
         Instant end = CannJudgeClient.instant(contest.get("end_time"));
         String contestStatus = state(start, end, now);
         Map<String,Object> metadata = contestMetadata(contest, contestStatus, now);
-        repo.upsertContest(metadata, "ACTIVE".equals(contestStatus), defaultInterval);
+        repo.upsertContest(metadata, contestStatus, repo.settingInt("default_poll_interval_seconds", defaultInterval, 60, 1800));
         contestsSeen++;
         if ("ENDED".equals(contestStatus)) continue;
+        Map<String,String> problemCaseSets = new LinkedHashMap<>();
+        Map<String,Set<String>> problemTestcaseIds = new LinkedHashMap<>();
+        Set<String> unavailableProblems = new HashSet<>();
         for (JsonNode p : contest.path("problems")) {
           String problemId = CannJudgeClient.text(p, "problem_id"); if (problemId == null) continue;
-          JsonNode problem = safeProblem(problemId);
-          repo.upsertProblem(problemId, contestId, problemSlug(problem), problemTitle(problem, problemId), difficulty(problem), tags(problem), hash(problem));
+          JsonNode problem;
+          try {
+            problem = source.problem(problemId);
+          } catch (Exception problemError) {
+            unavailableProblems.add(problemId);
+            alert("PROBLEM_SOURCE_FAILURE", "WARNING", contestId, problemId, null,
+                "题目源数据暂时不可用", rootMessage(problemError), Map.of("problemId", problemId));
+            continue;
+          }
+          String caseSetId = normalizer.caseSetId(problem.path("testcases"));
+          if (caseSetId != null) {
+            problemCaseSets.put(problemId, caseSetId);
+            problemTestcaseIds.put(problemId, normalizer.testcaseIds(problem.path("testcases")));
+          }
+          repo.upsertProblem(problemId, contestId, problemSlug(problem), problemTitle(problem, problemId), difficulty(problem),
+              tags(problem), hash(problem), problemCaseSets.get(problemId));
         }
         if (!"ACTIVE".equals(contestStatus) || !isEnabled(contestId) || (!force && !isDue(contestId, now))) continue;
+        contestsPolled++;
         Map<String,Map<String,Object>> stats = fetchStats(contestId);
         for (JsonNode p : contest.path("problems")) {
           String problemId = CannJudgeClient.text(p, "problem_id"); if (problemId == null) continue;
+          if (unavailableProblems.contains(problemId)) continue;
           List<JsonNode> ranking = fetchAllRanking(problemId);
-          List<Map<String,Object>> normalizedRanking = ranking.stream().map(raw -> normalizer.ranking(contestId, problemId, raw)).toList();
+          String caseSetId = problemCaseSets.get(problemId);
+          Set<String> officialCaseIds = problemTestcaseIds.getOrDefault(problemId, Set.of());
+          Map<String,String> historicalCaseSets = Map.of();
+          if (caseSetId != null) {
+            Set<String> observedCaseIds = new HashSet<>();
+            ranking.forEach(raw -> observedCaseIds.addAll(normalizer.testcaseIds(raw.path("result"))));
+            observedCaseIds.addAll(repo.caseIdsAssignedToVersion(contestId, problemId, caseSetId));
+            observedCaseIds.removeAll(officialCaseIds);
+            historicalCaseSets = repo.historicalCaseSets(contestId, problemId, observedCaseIds, caseSetId);
+            if (!historicalCaseSets.isEmpty()) repo.reconcileCaseSetAssignments(contestId, problemId, caseSetId, historicalCaseSets);
+          }
+          Map<String,String> knownCaseSets = historicalCaseSets;
+          List<Map<String,Object>> normalizedRanking = ranking.stream()
+              .map(raw -> normalizer.ranking(contestId, problemId, raw, caseSetId, officialCaseIds, knownCaseSets)).toList();
           Set<String> seen = new HashSet<>();
           for (Map<String,Object> row : normalizedRanking) {
             String key = String.valueOf(row.get("teamKey"));
@@ -112,26 +177,35 @@ public class PollService {
             Map<String,Object> current = repo.currentStats(contestId, problemId);
             if (current == null || !String.valueOf(current.get("row_hash")).equals(stat.get("rowHash"))) repo.insertStatsEvent(pollId, now, stat);
           }
-          repo.markContestPolled(contestId, now);
         }
+        repo.markContestPolled(contestId, now);
       }
     } catch (Exception ex) {
       status = "FAILED"; error = rootMessage(ex);
       alert("SOURCE_FAILURE", "ERROR", null, null, null, "CANNJudge 采集失败", error, Map.of("pollId", pollId));
     } finally {
-      repo.finishPollRun(pollId, status, clock.instant(), contestsSeen, rows, changed, null, error);
-      if ("FAILED".equals(status) && repo.consecutiveFailures() >= 2) alert("CONSECUTIVE_FAILURE", "ERROR", null, null, null, "连续采集失败", "最近两个采集周期均未成功", Map.of("consecutiveFailures", repo.consecutiveFailures()));
-      running.set(false);
+      try {
+        if (pollId > 0) repo.finishPollRun(pollId, status, clock.instant(), contestsSeen, contestsPolled, rows, changed, null, error);
+        if ("FAILED".equals(status) && repo.consecutiveFailures() >= 2) alert("CONSECUTIVE_FAILURE", "ERROR", null, null, null, "连续采集失败", "最近两个采集周期均未成功", Map.of("consecutiveFailures", repo.consecutiveFailures()));
+      } finally {
+        try { repo.releasePollLock(); } catch (RuntimeException ignored) { }
+        running.set(false);
+      }
     }
     return true;
   }
 
   private List<JsonNode> fetchAllRanking(String problemId) {
-    List<JsonNode> all = new ArrayList<>(); int page = 1; int total = Integer.MAX_VALUE;
+    List<JsonNode> all = new ArrayList<>(); int page = 1; int total = Integer.MAX_VALUE; Set<String> pageFingerprints = new HashSet<>();
     while (all.size() < total) {
       JsonNode response = source.ranking(problemId, page, pageSize);
       if (!response.has("rows") || !response.get("rows").isArray()) throw new CannJudgeClient.SourceException("ranking response missing rows for " + problemId);
-      total = response.path("total").asInt(response.get("rows").size()); response.get("rows").forEach(all::add);
+      JsonNode pageRows = response.get("rows");
+      String fingerprint = pageRows.toString();
+      if (!pageFingerprints.add(fingerprint)) throw new CannJudgeClient.SourceException("ranking pagination repeated a page for " + problemId);
+      if (response.has("total") && response.get("total").canConvertToInt()) total = Math.max(response.get("total").asInt(), all.size());
+      pageRows.forEach(all::add);
+      if (!response.has("total") && pageRows.size() < pageSize) break;
       if (response.get("rows").isEmpty() || ++page > 1000) break;
     }
     return all;
@@ -143,7 +217,6 @@ public class PollService {
     return out;
   }
 
-  private JsonNode safeProblem(String id) { try { return source.problem(id); } catch (Exception e) { return mapper.createObjectNode().put("name", id).put("title", id); } }
   private String problemSlug(JsonNode p) { return first(p, "name", "slug"); }
   private String problemTitle(JsonNode p, String id) { String title = first(p, "title", "name"); return title == null ? id : title; }
   private Integer difficulty(JsonNode p) { return p.hasNonNull("difficulty") ? p.get("difficulty").asInt() : null; }

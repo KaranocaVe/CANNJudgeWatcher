@@ -3,6 +3,8 @@ package cn.cannjudge.watcher.source;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class RowNormalizerTest {
@@ -77,5 +79,74 @@ class RowNormalizerTest {
     var normalized = new RowNormalizer(mapper).ranking("contest-1", "problem-1", raw);
 
     assertThat(String.valueOf(normalized.get("resultJson"))).contains("case-1", "18.75", "WrongAnswer");
+  }
+
+  @Test
+  void usesTheOfficialProblemCaseSetForPartialTeamResults() throws Exception {
+    var normalizer = new RowNormalizer(mapper);
+    var problemCases = mapper.readTree("""
+      {"testcases":[{"testcase_id":{"_id":"case-1"}},{"testcase_id":{"_id":"case-2"}},{"testcase_id":{"_id":"case-3"}}]}
+      """).path("testcases");
+    var firstTeam = mapper.readTree("""
+      {"team":{"_id":"team-1"},"result":[{"testcase_id":"case-1","time":4,"testcase_status":"Pass"}]}
+      """);
+    var secondTeam = mapper.readTree("""
+      {"team":{"_id":"team-2"},"result":[{"testcase_id":"case-2","time":5,"testcase_status":"Pass"}]}
+      """);
+    String officialCaseSetId = normalizer.caseSetId(problemCases);
+
+    var first = normalizer.ranking("contest-1", "problem-1", firstTeam, officialCaseSetId);
+    var second = normalizer.ranking("contest-1", "problem-1", secondTeam, officialCaseSetId);
+
+    assertThat(officialCaseSetId).isNotBlank();
+    assertThat(String.valueOf(first.get("resultJson"))).contains(officialCaseSetId);
+    assertThat(String.valueOf(second.get("resultJson"))).contains(officialCaseSetId);
+  }
+
+  @Test
+  void changesTheCaseSetFingerprintWhenOfficialCasesChange() throws Exception {
+    var normalizer = new RowNormalizer(mapper);
+    var original = mapper.readTree("""
+      [{"testcase_id":{"_id":"case-1"}},{"testcase_id":{"_id":"case-2"}}]
+      """);
+    var reordered = mapper.readTree("""
+      [{"testcase_id":{"_id":"case-2"}},{"testcase_id":{"_id":"case-1"}}]
+      """);
+    var changed = mapper.readTree("""
+      [{"testcase_id":{"_id":"case-1"}},{"testcase_id":{"_id":"case-3"}}]
+      """);
+
+    assertThat(normalizer.caseSetId(original)).isEqualTo("a9f6abc245576bcd27d55969a096fbc6");
+    assertThat(normalizer.caseSetId(original)).isEqualTo(normalizer.caseSetId(reordered));
+    assertThat(normalizer.caseSetId(original)).isNotEqualTo(normalizer.caseSetId(changed));
+  }
+
+  @Test
+  void separatesStaleCasesReturnedAlongsideTheCurrentOfficialCases() throws Exception {
+    var normalizer = new RowNormalizer(mapper);
+    var raw = mapper.readTree("""
+      {"team":{"_id":"team-1"},"result":[
+        {"testcase_id":"new-1","time":4,"testcase_status":"Pass"},
+        {"testcase_id":"new-2","time":5,"testcase_status":"Pass"},
+        {"testcase_id":"old-1","time":6,"testcase_status":"Pass"}]}
+      """);
+
+    var normalized = normalizer.ranking("contest-1", "problem-1", raw, "current-set",
+        Set.of("new-1", "new-2"), Map.of("old-1", "historical-set"));
+    var results = mapper.readTree(String.valueOf(normalized.get("resultJson")));
+
+    assertThat(results.get(0).path("caseSetId").asText()).isEqualTo("current-set");
+    assertThat(results.get(1).path("caseSetId").asText()).isEqualTo("current-set");
+    assertThat(results.get(2).path("caseSetId").asText()).isEqualTo("historical-set");
+  }
+
+  @Test
+  void usesStableNameWhenSourceOmitsTeamAndUserIds() throws Exception {
+    var normalizer = new RowNormalizer(mapper);
+    var first = mapper.readTree("{\"rank\":1,\"team\":{\"team_name\":\"Alpha\"}}");
+    var moved = mapper.readTree("{\"rank\":9,\"team\":{\"team_name\":\"Alpha\"}}");
+
+    assertThat(normalizer.ranking("contest-1", "problem-1", first).get("teamKey"))
+        .isEqualTo(normalizer.ranking("contest-1", "problem-1", moved).get("teamKey"));
   }
 }

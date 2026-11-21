@@ -17,6 +17,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
 
 @RestController
 @RequestMapping("/api")
@@ -31,10 +33,19 @@ public class ApiController {
     return repo.findContest(id).map(c -> ResponseEntity.ok((Object)new LinkedHashMap<>(Map.of("contest", c, "problems", repo.findProblems(id))))).orElseGet(() -> ResponseEntity.notFound().build());
   }
   @GetMapping("/contests/{id}/problems") public List<Models.Problem> problems(@PathVariable String id) { return repo.findProblems(id); }
-  @GetMapping("/rankings") public Map<String,Object> rankings(@RequestParam String contestId, @RequestParam String problemId, @RequestParam(required=false) String status, @RequestParam(defaultValue="1000") int limit) { List<Map<String,Object>> items=repo.currentRankings(contestId, problemId, status, limit); return Map.of("items", items, "caseBests", repo.caseBestSummary(contestId, problemId, items)); }
-  @GetMapping("/history") public Map<String,Object> history(@RequestParam String contestId, @RequestParam String problemId, @RequestParam(required=false) Instant from, @RequestParam(required=false) Instant to, @RequestParam(required=false) String teamKey) {
+  @GetMapping("/rankings") public Map<String,Object> rankings(@RequestParam String contestId, @RequestParam String problemId, @RequestParam(required=false) String status, @RequestParam(defaultValue="1000") int limit) {
+    List<Map<String,Object>> items=repo.currentRankings(contestId, problemId, status, limit);
+    Map<String,Object> response = new LinkedHashMap<>();
+    response.put("items", items);
+    response.put("caseBests", repo.caseBestSummary(contestId, problemId, items));
+    response.put("activeCaseSetId", repo.activeCaseSetId(contestId, problemId));
+    return response;
+  }
+  @GetMapping("/users") public List<Map<String,Object>> users() { return repo.users(); }
+  @GetMapping("/user-performance") public Map<String,Object> userPerformance(@RequestParam(required=false) String userId, @RequestParam(required=false) String userNickname, @RequestParam(defaultValue="1000") int limit) { return repo.userPerformance(userId, userNickname, limit); }
+  @GetMapping("/history") public Map<String,Object> history(@RequestParam String contestId, @RequestParam String problemId, @RequestParam(required=false) Instant from, @RequestParam(required=false) Instant to, @RequestParam(required=false) String teamKey, @RequestParam(defaultValue="5000") int limit) {
     Instant end=to==null?Instant.now():to; Instant start=from==null?end.minus(7, ChronoUnit.DAYS):from;
-    Map<String,Object> result = new LinkedHashMap<>(); result.put("from", start); result.put("to", end); result.put("items", repo.rankingHistory(contestId,problemId,start,end,teamKey));
+    Map<String,Object> result = new LinkedHashMap<>(); result.put("from", start); result.put("to", end); result.put("items", repo.rankingHistory(contestId,problemId,start,end,teamKey,limit));
     if (teamKey != null && !teamKey.isBlank()) result.put("caseBests", repo.caseBestSummaryForTeams(contestId, problemId, List.of(teamKey)));
     return result;
   }
@@ -42,12 +53,12 @@ public class ApiController {
   @GetMapping("/problem-stats") public Map<String,Object> stats(@RequestParam String contestId, @RequestParam String problemId, @RequestParam(required=false) Instant from, @RequestParam(required=false) Instant to) { Instant end=to==null?Instant.now():to; Instant start=from==null?end.minus(7, ChronoUnit.DAYS):from; return Map.of("items",repo.statsHistory(contestId,problemId,start,end)); }
   @GetMapping("/alerts") public List<Models.Alert> alerts(@RequestParam(defaultValue="false") boolean openOnly, @RequestParam(required=false) String contestId, @RequestParam(required=false) String problemId, @RequestParam(defaultValue="100") int limit) { return repo.alerts(openOnly,contestId,problemId,limit); }
   @GetMapping("/polls") public List<Map<String,Object>> polls(@RequestParam(defaultValue="50") int limit) { return repo.recentPolls(limit); }
-  @GetMapping("/source/health") public Map<String,Object> health() { Map<String,Object> m = new LinkedHashMap<>(repo.pollSummary()); m.put("healthy", repo.consecutiveFailures() == 0); return m; }
+  @GetMapping("/source/health") public Map<String,Object> health() { Map<String,Object> m = new LinkedHashMap<>(repo.pollSummary()); m.put("healthy", repo.latestPollHealthy() && repo.consecutiveFailures() == 0); return m; }
 
   @GetMapping("/settings") public Map<String,String> publicSettings() { return repo.settings(); }
   @PutMapping("/settings") public Map<String,String> settings(@RequestBody Map<String,String> values) { repo.updateSettings(values); return repo.settings(); }
-  @PutMapping("/contests/{id}/monitoring") public Map<String,Object> monitoring(@PathVariable String id, @RequestBody MonitoringRequest request) { repo.setMonitoring(id, request.enabled()); if (request.pollIntervalSeconds()!=null) repo.setPollInterval(id, Math.max(60, Math.min(1800, request.pollIntervalSeconds()))); return Map.of("ok",true); }
+  @PutMapping("/contests/{id}/monitoring") public Map<String,Object> monitoring(@PathVariable String id, @RequestBody MonitoringRequest request) { if (repo.findContest(id).isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "contest not found"); repo.setMonitoring(id, request.enabled()); if (request.pollIntervalSeconds()!=null) repo.setPollInterval(id, Math.max(60, Math.min(1800, request.pollIntervalSeconds()))); return Map.of("ok",true); }
   @PostMapping("/polls/run") public Map<String,Object> runPoll() { return Map.of("accepted", polls.runNow()); }
-  @PostMapping("/alerts/{id}/acknowledge") public Map<String,Object> acknowledge(@PathVariable long id) { repo.acknowledgeAlert(id); return Map.of("ok",true); }
+  @PostMapping("/alerts/{id}/acknowledge") public Map<String,Object> acknowledge(@PathVariable long id) { if (!repo.alertExists(id)) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "alert not found"); repo.acknowledgeAlert(id); return Map.of("ok",true); }
   public record MonitoringRequest(boolean enabled, Integer pollIntervalSeconds) {}
 }

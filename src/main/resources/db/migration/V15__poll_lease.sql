@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS poll_lease (
+  id SMALLINT PRIMARY KEY CHECK (id = 1),
+  locked_until TIMESTAMPTZ NOT NULL DEFAULT to_timestamp(0)
+);
+INSERT INTO poll_lease(id) VALUES (1) ON CONFLICT DO NOTHING;

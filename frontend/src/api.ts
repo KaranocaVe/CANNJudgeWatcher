@@ -1,4 +1,4 @@
-import type { Alert, Contest, ContestOverview, HistoryResponse, PollRun, Problem, ProblemStats, RankingResponse, Summary } from './types'
+import type { Alert, Contest, ContestOverview, HistoryResponse, PollRun, Problem, ProblemStats, RankingResponse, Summary, UserDirectoryItem, UserPerformanceResponse } from './types'
 
 type Params = Record<string, string | number | boolean | undefined>
 
@@ -19,11 +19,13 @@ export const api = {
   contests: (signal?: AbortSignal) => request<Contest[]>('/api/contests', { signal }),
   contest: (id: string, signal?: AbortSignal) => request<{ contest: Contest; problems: Problem[] }>(`/api/contests/${id}`, { signal }),
   rankings: (contestId: string, problemId: string, params: Params = {}, signal?: AbortSignal) => request<RankingResponse>('/api/rankings', { signal }, { contestId, problemId, limit: 1000, ...params }),
-  history: (contestId: string, problemId: string, from?: string, to?: string, options: { teamKey?: string; signal?: AbortSignal } = {}) => request<HistoryResponse>('/api/history', { signal: options.signal }, { contestId, problemId, from, to, teamKey: options.teamKey }),
+  users: (signal?: AbortSignal) => request<UserDirectoryItem[]>('/api/users', { signal }),
+  userPerformance: (userId?: string, userNickname?: string, signal?: AbortSignal) => request<UserPerformanceResponse>('/api/user-performance', { signal }, { userId, userNickname, limit: 1000 }),
+  history: (contestId: string, problemId: string, from?: string, to?: string, options: { teamKey?: string; signal?: AbortSignal } = {}) => request<HistoryResponse>('/api/history', { signal: options.signal }, { contestId, problemId, from, to, teamKey: options.teamKey, limit: 5000 }),
   contestOverview: (contestId: string, signal?: AbortSignal) => request<ContestOverview>('/api/dashboard/contest-overview', { signal }, { contestId }),
   stats: (contestId: string, problemId: string, from?: string, to?: string) => request<{ items: ProblemStats[] }>('/api/problem-stats', {}, { contestId, problemId, from, to }),
   alerts: (params: Params = {}, signal?: AbortSignal) => request<Alert[]>('/api/alerts', { signal }, { limit: 200, ...params }),
-  polls: (signal?: AbortSignal) => request<PollRun[]>('/api/polls', { signal }),
+  polls: (signal?: AbortSignal) => request<PollRun[]>('/api/polls', { signal }, { limit: 200 }),
   health: () => request<Record<string, unknown>>('/api/source/health'),
   me: () => request<{ authenticated: boolean; username?: string }>('/api/auth/me'),
   csrf: () => request<{ token: string }>('/api/auth/csrf'),

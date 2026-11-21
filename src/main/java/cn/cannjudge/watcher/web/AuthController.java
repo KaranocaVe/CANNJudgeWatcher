@@ -3,6 +3,11 @@ package cn.cannjudge.watcher.web;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.Map;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -20,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthController {
   private final AuthenticationManager authenticationManager;
   private final HttpSessionSecurityContextRepository contextRepository = new HttpSessionSecurityContextRepository();
+  private final Map<String, Attempt> failures = new ConcurrentHashMap<>();
   public AuthController(AuthenticationManager authenticationManager) { this.authenticationManager = authenticationManager; }
 
   @GetMapping("/csrf")
@@ -27,7 +33,19 @@ public class AuthController {
 
   @PostMapping("/login")
   public Map<String,Object> login(@RequestBody LoginRequest request, HttpServletRequest servletRequest, HttpServletResponse response) {
-    Authentication authentication = authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(request.username(), request.password()));
+    String username = request == null || request.username() == null ? "" : request.username().trim();
+    String key = servletRequest.getRemoteAddr() + ":" + username;
+    Attempt attempt = failures.get(key);
+    if (attempt != null && attempt.blocked()) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "登录尝试过于频繁，请稍后再试");
+    Authentication authentication;
+    try {
+      authentication = authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(username, request == null ? null : request.password()));
+      failures.remove(key);
+    } catch (RuntimeException ex) {
+      failures.compute(key, (ignored, old) -> old == null || old.expired() ? new Attempt(1, Instant.now()) : old.next());
+      throw ex;
+    }
+    if (servletRequest.getSession(false) != null) servletRequest.changeSessionId();
     SecurityContextHolder.getContext().setAuthentication(authentication);
     contextRepository.saveContext(SecurityContextHolder.getContext(), servletRequest, response);
     return Map.of("authenticated", true, "username", authentication.getName());
@@ -39,4 +57,9 @@ public class AuthController {
   }
 
   public record LoginRequest(String username, String password) {}
+  private record Attempt(int count, Instant firstFailure) {
+    boolean expired() { return firstFailure.plus(Duration.ofMinutes(15)).isBefore(Instant.now()); }
+    boolean blocked() { return !expired() && count >= 5; }
+    Attempt next() { return new Attempt(count + 1, firstFailure); }
+  }
 }

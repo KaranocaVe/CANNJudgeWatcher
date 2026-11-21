@@ -25,11 +25,11 @@ public class SecurityConfig {
           .ignoringRequestMatchers("/api/auth/login", "/actuator/**"))
       .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
       .authorizeHttpRequests(a -> a
-          .requestMatchers("/", "/index.html", "/assets/**", "/favicon.ico", "/api/auth/**", "/api/dashboard/**",
-              "/api/contests/**", "/api/rankings/**", "/api/history/**", "/api/problem-stats/**",
-              "/api/alerts", "/api/polls", "/api/source/health", "/actuator/health").permitAll()
           .requestMatchers("/api/settings/**", "/api/polls/run", "/api/alerts/*/acknowledge", "/api/contests/*/monitoring").authenticated()
-          .anyRequest().permitAll())
+          .requestMatchers("/", "/index.html", "/assets/**", "/favicon.ico", "/api/auth/**", "/api/dashboard/**",
+              "/api/contests", "/api/contests/*", "/api/contests/*/problems", "/api/rankings/**", "/api/history/**", "/api/problem-stats/**",
+              "/api/users", "/api/users/**", "/api/user-performance", "/api/alerts", "/api/polls", "/api/source/health", "/actuator/health").permitAll()
+          .anyRequest().denyAll())
       .formLogin(f -> f.disable())
       .httpBasic(b -> b.disable())
       .logout(l -> l.logoutUrl("/api/auth/logout").deleteCookies("JSESSIONID").invalidateHttpSession(true)

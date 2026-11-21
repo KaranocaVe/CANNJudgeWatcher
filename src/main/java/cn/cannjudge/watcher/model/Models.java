@@ -12,7 +12,8 @@ public final class Models {
       boolean monitoringEnabled, boolean manualOverride, int pollIntervalSeconds,
       Instant lastSeenAt, Instant lastPollAt, int problemCount) {}
 
-  public record Problem(String id, String contestId, String slug, String title, Integer difficulty, List<String> tags) {}
+  public record Problem(String id, String contestId, String slug, String title, Integer difficulty, List<String> tags,
+      String activeCaseSetId) {}
 
   public record Ranking(String contestId, String problemId, String teamKey, String teamId, String teamName,
       String userId, String userNickname, String submitterId, String submitterNickname, String submissionId,

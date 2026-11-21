@@ -1,0 +1,3 @@
+ALTER TABLE ranking_case_best
+  ALTER COLUMN team_key TYPE VARCHAR(180),
+  ALTER COLUMN testcase_id TYPE VARCHAR(180);

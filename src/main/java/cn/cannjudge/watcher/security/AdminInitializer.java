@@ -6,6 +6,7 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
+import org.springframework.dao.DataIntegrityViolationException;
 
 @Component
 public class AdminInitializer implements ApplicationRunner {
@@ -25,9 +26,16 @@ public class AdminInitializer implements ApplicationRunner {
 
   @Override public void run(ApplicationArguments args) {
     Integer count = jdbc.queryForObject("SELECT count(*) FROM admin_user", Integer.class);
-    if (count != null && count == 0) {
-      String hash = configuredHash == null || configuredHash.isBlank() ? encoder.encode(configuredPassword) : configuredHash;
-      jdbc.update("INSERT INTO admin_user(username,password_hash) VALUES (?,?)", username, hash);
+    if (count != null && count > 0) return;
+    if ((configuredHash == null || configuredHash.isBlank()) && (configuredPassword == null || configuredPassword.isBlank())) {
+      throw new IllegalStateException("ADMIN_PASSWORD_HASH or ADMIN_PASSWORD must be configured before the first startup");
+    }
+    String hash = configuredHash == null || configuredHash.isBlank() ? encoder.encode(configuredPassword) : configuredHash;
+    try {
+      jdbc.update("INSERT INTO admin_user(username,password_hash) VALUES (?,?) ON CONFLICT (username) DO NOTHING", username, hash);
+    } catch (DataIntegrityViolationException ex) {
+      // Another application instance initialized the same database concurrently.
+      if (jdbc.queryForObject("SELECT count(*) FROM admin_user", Integer.class) == 0) throw ex;
     }
   }
 }

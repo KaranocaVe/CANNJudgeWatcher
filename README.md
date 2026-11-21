@@ -26,7 +26,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-打开 http://localhost:8088。数据库迁移由 Flyway 在后端启动时自动执行。首次启动会用 `ADMIN_USERNAME` 与 `ADMIN_PASSWORD_HASH` 初始化单管理员；如果没有提供哈希，则将 `ADMIN_PASSWORD` 进行 BCrypt 哈希后保存。
+打开 http://localhost:8088。数据库迁移由 Flyway 在后端启动时自动执行。首次启动会用 `ADMIN_USERNAME` 与 `ADMIN_PASSWORD_HASH` 初始化单管理员；如果没有提供哈希，则将 `ADMIN_PASSWORD` 进行 BCrypt 哈希后保存。首次启动必须显式设置其中一个密码变量，系统不会使用内置默认密码。
 
 ## 数据与采集
 
