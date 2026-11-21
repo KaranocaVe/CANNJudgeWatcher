@@ -25,10 +25,10 @@ public class SecurityConfig {
           .ignoringRequestMatchers("/api/auth/login", "/actuator/**"))
       .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
       .authorizeHttpRequests(a -> a
-          .requestMatchers("/api/settings/**", "/api/polls/run", "/api/alerts/*/acknowledge", "/api/contests/*/monitoring").authenticated()
+          .requestMatchers("/api/settings/**", "/api/participation/evidence/**", "/api/polls/run", "/api/alerts/*/acknowledge", "/api/contests/*/monitoring").authenticated()
           .requestMatchers("/", "/index.html", "/assets/**", "/favicon.ico", "/api/auth/**", "/api/dashboard/**",
               "/api/contests", "/api/contests/*", "/api/contests/*/problems", "/api/rankings/**", "/api/history/**", "/api/problem-stats/**",
-              "/api/users", "/api/users/**", "/api/user-performance", "/api/alerts", "/api/polls", "/api/polls/gaps", "/api/source/health", "/actuator/health").permitAll()
+              "/api/users", "/api/users/**", "/api/user-performance", "/api/participation", "/api/alerts", "/api/polls", "/api/polls/gaps", "/api/source/health", "/actuator/health").permitAll()
           .anyRequest().denyAll())
       .formLogin(f -> f.disable())
       .httpBasic(b -> b.disable())

@@ -45,6 +45,20 @@ docker compose up -d --build
 - 采集运行：采集状态、行数、变化量和错误信息时间线。
 - 管理设置：管理员登录、赛事监控开关、全局间隔/冷却设置和立即采集。
 
+## 参赛分析
+
+公开个人赛总榜在后端启动后同步，之后每六小时检查一次。管线以 CANNJudge 用户 ID 关联不同赛段，并用 Watcher 历史中的去重提交 ID 显示已观测次数。总提交数来自平台总榜，监控停机不会扣减该数值。以源站标识合并同地区赛事的初赛和决赛。筛选阈值、名次口径和覆盖情况见页面。
+
+管理员可通过以下接口补充已经核验的公开来源。写入与删除须带管理员会话和 `X-XSRF-TOKEN`。
+
+| 方法与路径 | 请求体 |
+| --- | --- |
+| `PUT /api/participation/evidence/{contestId}/awards` | `{"sourceUrl":"https://…","winnerIds":["CANNJudge 用户 ID"]}` |
+| `PUT /api/participation/evidence/{contestId}/agent/{userId}` | `{"sourceUrl":"https://…"}` |
+| 同一资源的 `DELETE` | 无 |
+
+获奖来源须覆盖整个赛段，`winnerIds` 写入已对应到 CANNJudge 的完整获奖用户 ID。Agent 来源须明确对应用户、赛段和使用情况，例如参赛者公开自述。两项证据按各自覆盖的赛段计算。
+
 ## 检查
 
 ```bash

@@ -5,6 +5,7 @@ import {
   Bell,
   ChartNoAxesCombined,
   Clock3,
+  ChartScatter,
   Signal,
   LayoutGrid,
   ListOrdered,
@@ -17,6 +18,7 @@ import RankingView from './views/Ranking'
 import type { Alert, SelectedPerformance, SelectedUser } from './types'
 
 const OverviewView = lazy(() => import('./views/Overview'))
+const ParticipationView = lazy(() => import('./views/Participation'))
 const UsersView = lazy(() => import('./views/Users'))
 const HistoryView = lazy(() => import('./views/History'))
 const AlertsView = lazy(() => import('./views/Alerts'))
@@ -27,6 +29,7 @@ const navigation = [
   { id: 'ranking', label: '最新榜单', short: '榜单', icon: ListOrdered },
   { id: 'overview', label: '赛事概览', short: '概览', icon: LayoutGrid },
   { id: 'users', label: '用户详情', short: '用户', icon: ChartNoAxesCombined },
+  { id: 'participation', label: '参赛分析', short: '分析', icon: ChartScatter },
   { id: 'alerts', label: '异常信号', short: '告警', icon: Bell },
   { id: 'polls', label: '采集运行', short: '采集', icon: Clock3 },
   { id: 'settings', label: '管理设置', short: '设置', icon: Settings2 },
@@ -50,7 +53,11 @@ function savedSelection(): Selection {
 }
 
 export default function App() {
-  const [view, setView] = useState<View>('ranking')
+  const [view, setView] = useState<View>(() =>
+    new URLSearchParams(location.search).get('view') === 'participation'
+      ? 'participation'
+      : 'ranking',
+  )
   const [selection, setSelection] = useState(savedSelection)
   const [user, setUser] = useState<SelectedUser | null>(null)
   const [performance, setPerformance] = useState<SelectedPerformance | null>(
@@ -96,6 +103,10 @@ export default function App() {
   function go(next: View) {
     if (next === view) return
     setView(next)
+    const url = new URL(location.href)
+    if (next === 'participation') url.searchParams.set('view', 'participation')
+    else url.searchParams.delete('view')
+    window.history.replaceState(null, '', url)
     window.scrollTo(0, 0)
     requestAnimationFrame(() => main.current?.focus({ preventScroll: true }))
   }
@@ -117,7 +128,9 @@ export default function App() {
   const title =
     view === 'users'
       ? performance?.problemTitle || user?.name || '用户详情'
-      : navigation.find((item) => item.id === view)?.label
+      : view === 'participation'
+        ? '参赛投入与成绩'
+        : navigation.find((item) => item.id === view)?.label
   const run = summary.data?.latestPoll?.[0]
   const tone =
     summary.error ||
@@ -327,6 +340,15 @@ export default function App() {
                 key={contestId}
                 contestId={contestId}
                 onOpenAlert={openAlert}
+              />
+            )}
+            {view === 'participation' && (
+              <ParticipationView
+                onSelectUser={(next) => {
+                  setUser(next)
+                  setPerformance(null)
+                  go('users')
+                }}
               />
             )}
             {view === 'polls' && <PollsView />}

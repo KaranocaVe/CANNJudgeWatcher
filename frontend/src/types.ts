@@ -50,3 +50,53 @@ export type Summary = { collectorLate?: boolean; successful?: number; failed?: n
 
 export type SelectedUser = { id?: string; nickname?: string; name: string }
 export type SelectedPerformance = { contestId: string; contestTitle: string; problemId: string; problemTitle: string; teamKey: string; teamName: string }
+
+export type ParticipationFilters = {
+  minimumContests: number
+  minimumSubmissions: number
+  topN: number
+  mode: 'rank' | 'awards'
+  agentOnly: boolean
+}
+export type ParticipationContest = {
+  id: string
+  title: string
+  sourceUrl: string
+  endedAt: string
+  participants: number
+  awardsSource?: string | null
+  sampledAt?: string | null
+}
+export type ParticipationEntry = {
+  contestId: string
+  title: string
+  sourceUrl: string
+  submissions: number
+  rank: number
+  participants: number
+  award?: boolean | null
+  awardSource?: string | null
+  agentSource?: string | null
+  observedSubmissions?: number | null
+}
+export type ParticipationItem = {
+  userId: string
+  nickname: string
+  contestCount: number
+  stageCount: number
+  submissions: number
+  topFinishes: number
+  awardWins: number
+  awardKnown: number
+  agentEvidenceCount: number
+  score: number
+  entries: ParticipationEntry[]
+}
+export type ParticipationResponse = {
+  refreshedAt?: string | null
+  eligibleContests: number
+  coveredContests: number
+  awardCoveredContests: number
+  items: ParticipationItem[]
+  contests: ParticipationContest[]
+}

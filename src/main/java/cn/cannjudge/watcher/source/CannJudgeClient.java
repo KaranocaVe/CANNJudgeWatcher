@@ -40,6 +40,10 @@ public class CannJudgeClient {
         .body(JsonNode.class);
   }
 
+  public JsonNode contestStandings(String contestId) {
+    return get("/api/submissions/contest/" + contestId + "/stats");
+  }
+
   private JsonNode get(String path) {
     try {
       JsonNode body = client.get().uri(path).retrieve()

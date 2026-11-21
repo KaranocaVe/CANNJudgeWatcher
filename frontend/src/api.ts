@@ -1,4 +1,4 @@
-import type { Alert, Contest, ContestOverview, HistoryResponse, PollRun, Problem, ProblemStats, RankingResponse, SamplingGap, Summary, UserDirectoryItem, UserPerformanceResponse } from './types'
+import type { ParticipationFilters, ParticipationResponse, Alert, Contest, ContestOverview, HistoryResponse, PollRun, Problem, ProblemStats, RankingResponse, SamplingGap, Summary, UserDirectoryItem, UserPerformanceResponse } from './types'
 
 type Params = Record<string, string | number | boolean | undefined>
 
@@ -15,6 +15,8 @@ async function request<T>(path: string, options: RequestInit = {}, params?: Para
 }
 
 export const api = {
+  participation: (filters: ParticipationFilters, signal?: AbortSignal) =>
+    request<ParticipationResponse>('/api/participation', { signal }, filters),
   summary: (signal?: AbortSignal) => request<Summary>('/api/dashboard/summary', { signal }),
   contests: (signal?: AbortSignal) => request<Contest[]>('/api/contests', { signal }),
   contest: (id: string, signal?: AbortSignal) => request<{ contest: Contest; problems: Problem[] }>(`/api/contests/${id}`, { signal }),
