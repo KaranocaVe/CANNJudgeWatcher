@@ -128,11 +128,11 @@ public class WatcherRepository {
   }
 
   public List<Map<String,Object>> currentRankings(String contestId, String problemId, String status, int limit) {
-    StringBuilder sql = new StringBuilder("SELECT c.contest_id,c.problem_id,c.team_key,c.team_name,c.user_id,c.user_nickname,c.submitter_nickname,c.rank,c.status,c.create_time,")
+    StringBuilder sql = new StringBuilder("WITH event_counts AS (SELECT team_key,COUNT(*) AS total FROM ranking_event WHERE contest_id=? AND problem_id=? AND event_type<>'DELETE' GROUP BY team_key) SELECT c.contest_id,c.problem_id,c.team_key,c.team_name,c.user_id,c.user_nickname,c.submitter_nickname,c.rank,c.status,c.create_time,")
         .append(compactResult("c.result")).append(" AS result,")
         .append(compactResult("previous_event.result"))
-        .append(" AS previous_result,previous_event.rank AS previous_rank,COALESCE(record_count.total,0) AS record_count,c.updated_at FROM ranking_current c LEFT JOIN LATERAL (SELECT previous_event.result,previous_event.rank FROM ranking_event previous_event WHERE previous_event.contest_id=c.contest_id AND previous_event.problem_id=c.problem_id AND previous_event.team_key=c.team_key AND previous_event.event_type<>'DELETE' ORDER BY previous_event.poll_id DESC,previous_event.id DESC OFFSET 1 LIMIT 1) previous_event ON true LEFT JOIN LATERAL (SELECT count(*) AS total FROM ranking_event recorded WHERE recorded.contest_id=c.contest_id AND recorded.problem_id=c.problem_id AND recorded.team_key=c.team_key AND recorded.event_type<>'DELETE') record_count ON true WHERE c.contest_id=? AND c.problem_id=?");
-    List<Object> args = new ArrayList<>(List.of(contestId, problemId));
+        .append(" AS previous_result,previous_event.rank AS previous_rank,COALESCE(event_counts.total,0) AS record_count,c.updated_at FROM ranking_current c LEFT JOIN event_counts ON event_counts.team_key=c.team_key LEFT JOIN LATERAL (SELECT previous_event.result,previous_event.rank FROM ranking_event previous_event WHERE previous_event.contest_id=c.contest_id AND previous_event.problem_id=c.problem_id AND previous_event.team_key=c.team_key AND previous_event.event_type<>'DELETE' ORDER BY previous_event.poll_id DESC,previous_event.id DESC OFFSET 1 LIMIT 1) previous_event ON true WHERE c.contest_id=? AND c.problem_id=?");
+    List<Object> args = new ArrayList<>(List.of(contestId, problemId, contestId, problemId));
     if (status != null && !status.isBlank()) { sql.append(" AND status=?"); args.add(status); }
     sql.append(" ORDER BY rank NULLS LAST, create_time ASC NULLS LAST, team_key LIMIT ?");
     args.add(Math.min(Math.max(limit, 1), 1000));
@@ -377,21 +377,29 @@ public class WatcherRepository {
         (org.springframework.jdbc.core.RowCallbackHandler) rs -> problems.put(rs.getString(1), new LinkedHashMap<>(Map.of("rowCount", rs.getInt(2), "passCount", rs.getInt(3), "eventCount", 0))), contestId);
     jdbc.query("SELECT problem_id,COUNT(*) FROM ranking_event WHERE contest_id=? AND observed_at>=? GROUP BY problem_id",
         (org.springframework.jdbc.core.RowCallbackHandler) rs -> problems.computeIfAbsent(rs.getString(1), ignored -> new LinkedHashMap<>(Map.of("rowCount", 0, "passCount", 0, "eventCount", 0))).put("eventCount", rs.getInt(2)), contestId, sqlTime(from));
-    return Map.of("problems", problems, "activity", performanceActivity(contestId, from));
+    int openAlerts = jdbc.queryForObject("SELECT count(*) FROM alert_event WHERE contest_id=? AND acknowledged_at IS NULL", Integer.class, contestId);
+    return Map.of("problems", problems, "activity", performanceActivity(contestId, from), "openAlerts", openAlerts);
   }
 
   private List<Map<String,Object>> performanceActivity(String contestId, Instant from) {
     String sql = """
-      WITH ordered AS (
+      WITH seed AS (
+        SELECT DISTINCT ON (problem_id,team_key) id,problem_id,team_key,observed_at,event_type,result
+        FROM ranking_event WHERE contest_id=? AND observed_at<?
+        ORDER BY problem_id,team_key,observed_at DESC,id DESC
+      ), recent AS (
+        SELECT id,problem_id,team_key,observed_at,event_type,result
+        FROM ranking_event WHERE contest_id=? AND observed_at>=?
+      ), ordered AS (
         SELECT id,observed_at,event_type,result,
-          LAG(result) OVER (PARTITION BY contest_id,problem_id,team_key ORDER BY observed_at,id) AS previous_result
-        FROM ranking_event WHERE contest_id=?
+          LAG(result) OVER (PARTITION BY problem_id,team_key ORDER BY observed_at,id) AS previous_result
+        FROM (SELECT * FROM seed UNION ALL SELECT * FROM recent) events
       )
       SELECT date_trunc('hour',observed_at) AS observed_at,event_type,%s AS result,%s AS previous_result
       FROM ordered WHERE observed_at>=? ORDER BY observed_at
       """.formatted(compactResult("result"), compactResult("previous_result"));
     Map<Timestamp,Map<String,Object>> buckets = new LinkedHashMap<>();
-    for (Map<String,Object> event : friendlyRows(jdbc.queryForList(sql, contestId, sqlTime(from)))) {
+    for (Map<String,Object> event : friendlyRows(jdbc.queryForList(sql, contestId, sqlTime(from), contestId, sqlTime(from), sqlTime(from)))) {
       Timestamp observedAt = (Timestamp) event.get("observed_at");
       Map<String,Object> bucket = buckets.computeIfAbsent(observedAt, ignored -> activityBucket(observedAt));
       increment(bucket, "changes");
