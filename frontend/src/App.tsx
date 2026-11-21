@@ -29,7 +29,12 @@ const navigation = [
   { id: 'ranking', label: '最新榜单', short: '榜单', icon: ListOrdered },
   { id: 'overview', label: '赛事概览', short: '概览', icon: LayoutGrid },
   { id: 'users', label: '用户详情', short: '用户', icon: ChartNoAxesCombined },
-  { id: 'participation', label: '参赛分析', short: '分析', icon: ChartScatter },
+  {
+    id: 'participation',
+    label: '最难绷之人',
+    short: '难绷',
+    icon: ChartScatter,
+  },
   { id: 'alerts', label: '异常信号', short: '告警', icon: Bell },
   { id: 'polls', label: '采集运行', short: '采集', icon: Clock3 },
   { id: 'settings', label: '管理设置', short: '设置', icon: Settings2 },
@@ -128,9 +133,7 @@ export default function App() {
   const title =
     view === 'users'
       ? performance?.problemTitle || user?.name || '用户详情'
-      : view === 'participation'
-        ? '参赛投入与成绩'
-        : navigation.find((item) => item.id === view)?.label
+      : navigation.find((item) => item.id === view)?.label
   const run = summary.data?.latestPoll?.[0]
   const tone =
     summary.error ||

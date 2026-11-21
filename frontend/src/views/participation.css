@@ -8,6 +8,7 @@
 .participation-toolbar { display: flex; justify-content: space-between; align-items: end; gap: 14px; margin-bottom: 12px; }
 .participation-toolbar h2 { font-size: 23px; }
 .participation-toolbar p { color: var(--muted); margin-top: 6px; font-size: 13px; }
+.participation-leader { margin: 0 0 12px; border-left: 2px solid var(--accent); padding: 8px 12px; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
 .participation-columns, .participation-row-main {
   display: grid;
   grid-template-columns: minmax(125px, 1.2fr) 79px minmax(165px, 1.5fr) minmax(90px, .6fr) 62px 22px;

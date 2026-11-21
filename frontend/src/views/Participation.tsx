@@ -79,6 +79,11 @@ export default function ParticipationView({
         `${item.nickname} ${item.userId}`.toLowerCase().includes(needle),
     )
   }, [data?.items, query])
+  const leader = items[0]
+  const awardMode = filters.mode === 'awards'
+  const known = awardMode ? leader?.awardKnown : leader?.rankKnown
+  const hits = awardMode ? leader?.awardWins : leader?.topFinishes
+  const result = awardMode ? '获奖' : `进 Top ${filters.topN}`
   const maxSubmissions = Math.max(
     ...(data?.items.map((item) => item.submissions) ?? []),
     1,
@@ -103,8 +108,8 @@ export default function ParticipationView({
   return (
     <div className="panel-stack participation-page">
       <p className="participation-intro">
-        汇总 CANNJudge 公开赛事与 Watcher
-        历史赛段。参赛次数合并同一赛事的初赛和决赛，提交和成绩按赛段核对。
+        提交得挺勤，进前列的次数倒很省。参赛范围覆盖 CANNJudge 公开赛事和
+        Watcher 历史赛段，同一赛事的初赛和决赛合计为一场。
       </p>
       <form
         className="participation-filters"
@@ -211,7 +216,7 @@ export default function ParticipationView({
           >
             <div className="participation-toolbar">
               <div>
-                <h2 id="participation-results">筛选结果</h2>
+                <h2 id="participation-results">难绷榜</h2>
                 <p>
                   {items.length} 个账号 · 公开总榜覆盖 {data.coveredContests}/
                   {data.eligibleContests} 个赛段 · 用户记录{' '}
@@ -228,6 +233,18 @@ export default function ParticipationView({
                 onValueChange={setQuery}
               />
             </div>
+            {leader && known != null && known > 0 && hits != null && (
+              <p className="participation-leader">
+                <strong>{leader.nickname}</strong> 打了{' '}
+                {number(leader.contestCount)} 场，交了
+                {leader.lowerBound ? '至少 ' : ' '}
+                {number(leader.submissions)} 次。 有
+                {awardMode ? '获奖结果' : '结赛总榜'}的 {number(known)} 个赛段，
+                {hits === 0
+                  ? `一次也没${result}。`
+                  : `总算${result}了 ${number(hits)} 次。`}
+              </p>
+            )}
             {items.length === 0 ? (
               <Empty text={emptyMessage} />
             ) : (
