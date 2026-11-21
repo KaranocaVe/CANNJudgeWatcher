@@ -40,6 +40,10 @@ public class CannJudgeClient {
         .body(JsonNode.class);
   }
 
+  public JsonNode contestSummary(String contestId) {
+    return get("/api/submissions/contest/" + contestId + "/stats?group=summary");
+  }
+
   public JsonNode contestStandings(String contestId) {
     return get("/api/submissions/contest/" + contestId + "/stats");
   }

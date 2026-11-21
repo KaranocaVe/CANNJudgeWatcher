@@ -17,10 +17,10 @@ class ParticipationServiceTest {
           {"user_id":"d","submissionCount":10,"passCount":3,"score":3}
         ]
         """);
-    var byScore = ParticipationService.parseStandings(rows, false);
+    var byScore = ParticipationService.parseStandings(rows, false, false);
     assertEquals(java.util.List.of("b","c","a","d"), byScore.stream().map(ParticipationRepository.Standing::userId).toList());
     assertEquals(java.util.List.of(1,1,3,4), byScore.stream().map(ParticipationRepository.Standing::rank).toList());
-    assertEquals("d", ParticipationService.parseStandings(rows, true).getFirst().userId());
+    assertEquals("d", ParticipationService.parseStandings(rows, true, false).getFirst().userId());
   }
 
   @Test
@@ -39,6 +39,6 @@ class ParticipationServiceTest {
           {"user_id":"a","submissionCount":10,"passCount":3,"score":3}
         ]
         """);
-    assertThrows(IllegalArgumentException.class, () -> ParticipationService.parseStandings(rows, false));
+    assertThrows(IllegalArgumentException.class, () -> ParticipationService.parseStandings(rows, false, false));
   }
 }

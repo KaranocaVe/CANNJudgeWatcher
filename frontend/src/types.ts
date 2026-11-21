@@ -58,11 +58,19 @@ export type ParticipationFilters = {
   mode: 'rank' | 'awards'
   agentOnly: boolean
 }
+export type ParticipationStatus = "ACTIVE" | "ENDED" | "UPCOMING" | "UNKNOWN"
 export type ParticipationContest = {
   id: string
   title: string
-  sourceUrl: string
-  endedAt: string
+  sourceUrl: string | null
+  endedAt: string | null
+  origin: "PUBLIC" | "WATCHER"
+  status: ParticipationStatus
+  organization: "INDIVIDUAL" | "TEAM" | "UNKNOWN"
+  observedParticipants: number
+  totalSubmissions?: number | null
+  rankAccess: "PUBLIC" | "HIDDEN" | "HISTORICAL"
+  summarySampledAt?: string | null
   participants: number
   awardsSource?: string | null
   sampledAt?: string | null
@@ -70,9 +78,13 @@ export type ParticipationContest = {
 export type ParticipationEntry = {
   contestId: string
   title: string
-  sourceUrl: string
+  sourceUrl: string | null
   submissions: number
-  rank: number
+  rank: number | null
+  submissionSource: "OFFICIAL" | "WATCHER"
+  rankSource: "INDIVIDUAL" | "TEAM" | null
+  status: ParticipationStatus
+  finalRank: boolean
   participants: number
   award?: boolean | null
   awardSource?: string | null
@@ -84,6 +96,8 @@ export type ParticipationItem = {
   nickname: string
   contestCount: number
   stageCount: number
+  rankKnown: number
+  lowerBound: boolean
   submissions: number
   topFinishes: number
   awardWins: number
@@ -96,6 +110,9 @@ export type ParticipationResponse = {
   refreshedAt?: string | null
   eligibleContests: number
   coveredContests: number
+  observedContests: number
+  userCoveredContests: number
+  totalSubmissionsContests: number
   awardCoveredContests: number
   items: ParticipationItem[]
   contests: ParticipationContest[]
