@@ -78,7 +78,7 @@ export default function ParticipationView({
     )
   }, [data?.items, query])
   const maxSubmissions = Math.max(...(items.map((item) => item.submissions) || [1]), 1)
-  const maxScore = Math.max(...(items.map((item) => item.score) || [1]), 1)
+  const maxScore = Math.max(...(items.map((item) => Number(item.score) || 0) || [1]), 1)
 
   const apply = () => setFilters({ ...draft })
   const reset = () => {
@@ -140,7 +140,7 @@ function ParticipationRow({ item, maxSubmissions, maxScore, expanded, onToggle, 
       <span className="participation-identity"><strong>{item.nickname || item.userId}</strong><small>{item.userId}</small></span>
       <span className="participation-metric"><span className="metric-label">提交</span><span className="metric-bar"><i style={{ width: `${(item.submissions / maxSubmissions) * 100}%` }} /></span><b>{number(item.submissions)}</b></span>
       <span className="participation-metric"><span className="metric-label">{mode === 'awards' ? '获奖' : `Top ${item.topFinishes}`}</span><b>{mode === 'awards' ? `${number(item.awardWins)}${item.awardKnown ? '' : ' · 数据有限'}` : number(item.topFinishes)}</b></span>
-      <span className="participation-metric score-metric"><span className="metric-label">综合值</span><span className="metric-bar metric-bar-score"><i style={{ width: `${(item.score / maxScore) * 100}%` }} /></span><b>{number(item.score)}</b></span>
+      <span className="participation-metric score-metric"><span className="metric-label">综合值</span><span className="metric-bar metric-bar-score"><i style={{ width: `${((Number(item.score) || 0) / maxScore) * 100}%` }} /></span><b>{number(item.score)}</b></span>
       <span className="participation-expand" aria-hidden>{expanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}</span>
     </button>
     {expanded && <div className="participation-detail"><div className="participation-detail-head"><span>赛事证据</span><button onClick={onSelect}>查看用户历史 <span aria-hidden>→</span></button></div><div className="participation-entries">{item.entries.map((entry) => <div className="participation-entry" key={entry.contestId}><span className="entry-title">{entry.sourceUrl ? <a href={entry.sourceUrl} target="_blank" rel="noreferrer">{entry.title}</a> : entry.title}</span><span>{number(entry.submissions)} 次提交</span><span>{entry.rank == null ? '排名未知' : `第 ${number(entry.rank)} 名 / ${number(entry.participants)}`}</span><span>{entry.award === true ? <Chip color="success">官方获奖</Chip> : entry.award === false ? <Chip>未获奖</Chip> : <Chip color="warning">结果未知</Chip>}</span><span>{entry.agentSource ? <Chip color="primary">代理证据</Chip> : <span className="muted">无代理证据</span>}</span></div>)}</div></div>}
