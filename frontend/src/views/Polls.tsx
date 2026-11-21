@@ -1,13 +1,21 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo } from 'react'
 import { Clock3 } from 'lucide-react'
 import { Panel, Chip, DataTable, Empty, Toolbar, LoadingRows } from '../ui'
 import { fmt } from '../format'
 import type { PollRun } from '../types'
 import { api } from '../api'
-import { isAbortError } from '../useResource'
+import { useResource } from '../useResource'
+import { SamplingGaps } from '../sampling'
 
 type PollOutcomeKey =
-  'idle' | 'unchanged' | 'changed' | 'empty' | 'failed' | 'unknown' | 'running'
+  | 'interrupted'
+  | 'idle'
+  | 'unchanged'
+  | 'changed'
+  | 'empty'
+  | 'failed'
+  | 'unknown'
+  | 'running'
 type PollOutcome = {
   key: PollOutcomeKey
   label: string
@@ -16,6 +24,13 @@ type PollOutcome = {
 }
 
 function pollOutcome(run: PollRun): PollOutcome {
+  if (run.status === 'INTERRUPTED')
+    return {
+      key: 'interrupted',
+      label: '采集中断',
+      color: 'warning',
+      detail: run.error_message || '完成时间未知',
+    }
   if (run.status === 'FAILED')
     return {
       key: 'failed',
@@ -95,23 +110,19 @@ function pollDuration(run: PollRun) {
 }
 
 export default function PollsView() {
-  const [runs, setRuns] = useState<PollRun[]>([])
-  const [loading, setLoading] = useState(true)
-  useEffect(() => {
-    const controller = new AbortController()
-    api
-      .polls(controller.signal)
-      .then((runs) => {
-        if (!controller.signal.aborted) setRuns(runs)
-      })
-      .catch((error) => {
-        if (!isAbortError(error)) console.warn('加载采集运行失败', error)
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
-      })
-    return () => controller.abort()
+  const fetchRuns = useCallback(async (signal: AbortSignal) => {
+    const [runs, gaps] = await Promise.all([
+      api.polls(signal),
+      api.pollGaps(signal),
+    ])
+    return { runs, gaps }
   }, [])
+  const {
+    data,
+    pending: loading,
+    error,
+  } = useResource('polls', fetchRuns, 30_000)
+  const runs = data?.runs ?? []
   const counts = useMemo(() => {
     const result: Record<PollOutcomeKey, number> = {
       idle: 0,
@@ -119,6 +130,7 @@ export default function PollsView() {
       changed: 0,
       empty: 0,
       failed: 0,
+      interrupted: 0,
       unknown: 0,
       running: 0,
     }
@@ -143,7 +155,11 @@ export default function PollsView() {
           <strong>采集运行</strong>
         </div>
       </Toolbar>
+      <SamplingGaps gaps={data?.gaps ?? []} scope="近七天采集缺口" />
       <div className="poll-run-summary">
+        {counts.interrupted > 0 && (
+          <Chip color="warning">中断 {counts.interrupted}</Chip>
+        )}
         <Chip color="default">无赛事实际采集 {counts.idle}</Chip>
         <Chip color="default">已采集无变化 {counts.unchanged}</Chip>
         <Chip color="warning">采集但无榜单行 {counts.empty}</Chip>
@@ -171,7 +187,7 @@ export default function PollsView() {
             {!runs.length && (
               <tr>
                 <td colSpan={8}>
-                  <Empty text="暂无采集记录" />
+                  <Empty text={error || '暂无采集记录'} />
                 </td>
               </tr>
             )}

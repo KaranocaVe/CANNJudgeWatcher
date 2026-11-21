@@ -164,7 +164,7 @@ export default function RankingEvidence({
                   </div>
                   {inline && id === selectedCase && (
                     <span className="reading-key">
-                      ● 本次 · ○ 上次（标尺仅绘制通过耗时）
+                      ● 本次 · ○ 上次有记录的读数（标尺仅绘制通过耗时）
                     </span>
                   )}
                   {item && (

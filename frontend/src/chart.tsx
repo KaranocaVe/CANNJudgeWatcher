@@ -9,10 +9,12 @@ import {
 import {
   GridComponent,
   LegendComponent,
+  MarkAreaComponent,
   MarkLineComponent,
   TooltipComponent,
   type GridComponentOption,
   type LegendComponentOption,
+  type MarkAreaComponentOption,
   type MarkLineComponentOption,
   type TooltipComponentOption,
 } from 'echarts/components'
@@ -23,6 +25,7 @@ use([
   LineChart,
   GridComponent,
   LegendComponent,
+  MarkAreaComponent,
   MarkLineComponent,
   TooltipComponent,
   CanvasRenderer,
@@ -33,6 +36,7 @@ export type ChartOption = ComposeOption<
   | LineSeriesOption
   | GridComponentOption
   | LegendComponentOption
+  | MarkAreaComponentOption
   | MarkLineComponentOption
   | TooltipComponentOption
 >

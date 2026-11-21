@@ -120,7 +120,10 @@ export default function App() {
       : navigation.find((item) => item.id === view)?.label
   const run = summary.data?.latestPoll?.[0]
   const tone =
-    summary.error || run?.status === 'FAILED'
+    summary.error ||
+    summary.data?.collectorLate ||
+    run?.status === 'FAILED' ||
+    run?.status === 'INTERRUPTED'
       ? 'danger'
       : run?.status === 'SUCCESS'
         ? 'success'
@@ -129,13 +132,17 @@ export default function App() {
           : 'default'
   const label = summary.error
     ? '状态读取失败'
-    : run?.status === 'FAILED'
-      ? '采集失败'
-      : run?.status === 'SUCCESS'
-        ? '采集正常'
-        : run?.status === 'RUNNING'
-          ? '采集中'
-          : '等待采集'
+    : summary.data?.collectorLate
+      ? '采集已超时'
+      : run?.status === 'INTERRUPTED'
+        ? '采集已中断'
+        : run?.status === 'FAILED'
+          ? '采集失败'
+          : run?.status === 'SUCCESS'
+            ? '采集正常'
+            : run?.status === 'RUNNING'
+              ? '采集中'
+              : '等待采集'
 
   return (
     <div className="app-shell">

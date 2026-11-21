@@ -24,7 +24,8 @@ import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class PollService {
@@ -35,6 +36,7 @@ public class PollService {
   private final Clock clock;
   private final int defaultInterval;
   private final int pageSize;
+  private final TransactionTemplate transactions;
   private final AtomicBoolean running = new AtomicBoolean();
   private final AtomicBoolean manualQueued = new AtomicBoolean();
   private final ExecutorService manualPollExecutor = Executors.newSingleThreadExecutor(r -> {
@@ -43,10 +45,11 @@ public class PollService {
     return thread;
   });
 
-  public PollService(CannJudgeClient source, WatcherRepository repo, ObjectMapper mapper, Clock clock,
+  public PollService(CannJudgeClient source, WatcherRepository repo, ObjectMapper mapper, Clock clock, PlatformTransactionManager transactionManager,
       @Value("${cannjudge.default-poll-interval-seconds:120}") int defaultInterval,
       @Value("${cannjudge.max-page-size:100}") int pageSize) {
     this.source = source; this.repo = repo; this.mapper = mapper; this.normalizer = new RowNormalizer(mapper);
+    this.transactions = new TransactionTemplate(transactionManager);
     this.clock = clock; this.defaultInterval = defaultInterval; this.pageSize = pageSize;
   }
 
@@ -71,19 +74,22 @@ public class PollService {
     try { manualPollExecutor.awaitTermination(2, TimeUnit.SECONDS); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
   }
 
-  @Transactional
   public boolean run(boolean force) {
     if (!running.compareAndSet(false, true)) return false;
     try {
-      if (!repo.tryAcquirePollLock()) { running.set(false); return false; }
-    } catch (RuntimeException ex) {
+      return repo.withPollLock(() -> collect(force));
+    } finally {
       running.set(false);
-      throw ex;
     }
+  }
+
+  private void collect(boolean force) {
     Instant started = clock.instant(); long pollId = -1;
     int contestsSeen = 0, contestsPolled = 0, rows = 0, changed = 0; String error = null; String status = "SUCCESS";
     try {
+      repo.finishInterruptedPolls();
       pollId = repo.createPollRun(started);
+      long roundId = pollId;
       JsonNode group = source.publicGroup();
       String groupId = CannJudgeClient.text(group, "_id");
       if (groupId == null) throw new CannJudgeClient.SourceException("public group has no _id");
@@ -124,62 +130,18 @@ public class PollService {
         if (!"ACTIVE".equals(contestStatus)) continue;
         Map<String,Object> monitoring = repo.findContestRow(contestId);
         if (!Boolean.TRUE.equals(monitoring.get("monitoring_enabled")) || (!force && !isDue(monitoring, now))) continue;
+        int contestInterval = ((Number) monitoring.get("poll_interval_seconds")).intValue();
         contestsPolled++;
         Map<String,Map<String,Object>> stats = fetchStats(contestId);
         for (JsonNode p : contest.path("problems")) {
           String problemId = CannJudgeClient.text(p, "problem_id"); if (problemId == null) continue;
           if (unavailableProblems.contains(problemId)) continue;
           List<JsonNode> ranking = fetchAllRanking(problemId);
-          String caseSetId = problemCaseSets.get(problemId);
-          Set<String> officialCaseIds = problemTestcaseIds.getOrDefault(problemId, Set.of());
-          Map<String,String> historicalCaseSets = Map.of();
-          if (caseSetId != null) {
-            Set<String> observedCaseIds = new HashSet<>();
-            ranking.forEach(raw -> observedCaseIds.addAll(normalizer.testcaseIds(raw.path("result"))));
-            observedCaseIds.addAll(repo.caseIdsAssignedToVersion(contestId, problemId, caseSetId));
-            observedCaseIds.removeAll(officialCaseIds);
-            historicalCaseSets = repo.historicalCaseSets(contestId, problemId, observedCaseIds, caseSetId);
-            if (!historicalCaseSets.isEmpty()) repo.reconcileCaseSetAssignments(contestId, problemId, caseSetId, historicalCaseSets);
-          }
-          Map<String,String> knownCaseSets = historicalCaseSets;
-          List<Map<String,Object>> normalizedRanking = ranking.stream()
-              .map(raw -> normalizer.ranking(contestId, problemId, raw, caseSetId, officialCaseIds, knownCaseSets)).toList();
-          Map<String,Map<String,Object>> remaining = repo.currentRowsByTeam(contestId, problemId);
-          Set<String> seen = new HashSet<>();
-          for (Map<String,Object> row : normalizedRanking) {
-            String key = String.valueOf(row.get("teamKey"));
-            if (!seen.add(key)) { alert("DUPLICATE_TEAM", "WARNING", contestId, problemId, key, "榜单存在重复队伍", "同一题目在一次采集中出现重复队伍键", Map.of("teamKey", key)); continue; }
-            Map<String,Object> previous = remaining.remove(key);
-            if (previous == null) {
-              repo.insertRankingEvent(pollId, now, row, "UPSERT", repo.json(evidence(previous, row)));
-              repo.recordCaseBests(row, now);
-              repo.upsertCurrent(row, pollId, now); changed++;
-              evaluateChange(previous, row);
-            } else if (sameCaseEvidence(previous, row)) {
-              // Keep the latest official rank and submission metadata current, but do not turn a
-              // global score/rank recalculation into a per-team performance observation.
-              if (!String.valueOf(previous.get("row_hash")).equals(row.get("rowHash")) || !sameCurrentPresentation(previous, row)) {
-                repo.upsertCurrent(row, pollId, now);
-              }
-            } else {
-              repo.insertRankingEvent(pollId, now, row, "UPDATE", repo.json(evidence(previous, row)));
-              repo.recordCaseBests(row, now);
-              repo.upsertCurrent(row, pollId, now); changed++;
-              evaluateChange(previous, row);
-            }
-            rows++;
-          }
-          for (Map.Entry<String,Map<String,Object>> missing : remaining.entrySet()) {
-            Map<String,Object> deleted = databaseRow(contestId, problemId, missing.getValue());
-            repo.insertRankingEvent(pollId, now, deleted, "DELETE", repo.json(Map.of("reason", "missing_from_source")));
-            repo.deleteCurrent(contestId, problemId, missing.getKey());
-            changed++;
-          }
-          Map<String,Object> stat = stats.get(problemId);
-          if (stat != null) {
-            Map<String,Object> current = repo.currentStats(contestId, problemId);
-            if (current == null || !String.valueOf(current.get("row_hash")).equals(stat.get("rowHash"))) repo.insertStatsEvent(pollId, now, stat);
-          }
+          SampleCounts counts = transactions.execute(transaction -> persistSample(roundId, now, contestInterval,
+              contestId, problemId, ranking, problemCaseSets.get(problemId),
+              problemTestcaseIds.getOrDefault(problemId, Set.of()), stats.get(problemId)));
+          rows += counts.rows();
+          changed += counts.changes();
         }
         repo.markContestPolled(contestId, now);
       }
@@ -187,15 +149,65 @@ public class PollService {
       status = "FAILED"; error = rootMessage(ex);
       alert("SOURCE_FAILURE", "ERROR", null, null, null, "CANNJudge 采集失败", error, Map.of("pollId", pollId));
     } finally {
-      try {
-        if (pollId > 0) repo.finishPollRun(pollId, status, clock.instant(), contestsSeen, contestsPolled, rows, changed, null, error);
-        if ("FAILED".equals(status) && repo.consecutiveFailures() >= 2) alert("CONSECUTIVE_FAILURE", "ERROR", null, null, null, "连续采集失败", "最近两个采集周期均未成功", Map.of("consecutiveFailures", repo.consecutiveFailures()));
-      } finally {
-        try { repo.releasePollLock(); } catch (RuntimeException ignored) { }
-        running.set(false);
+      if (pollId > 0) repo.finishPollRun(pollId, status, clock.instant(), contestsSeen, contestsPolled, rows, changed, null, error);
+      if ("FAILED".equals(status) && repo.consecutiveFailures() >= 2) alert("CONSECUTIVE_FAILURE", "ERROR", null, null, null, "连续采集失败", "最近两个采集周期均未成功", Map.of("consecutiveFailures", repo.consecutiveFailures()));
+    }
+  }
+
+  private record SampleCounts(int rows, int changes) {}
+
+  private SampleCounts persistSample(long roundId, Instant now, int contestInterval,
+      String contestId, String problemId, List<JsonNode> ranking, String caseSetId,
+      Set<String> officialCaseIds, Map<String,Object> stat) {
+    int problemChanges = 0;
+    Map<String,String> historicalCaseSets = Map.of();
+    if (caseSetId != null) {
+      Set<String> observedCaseIds = new HashSet<>();
+      ranking.forEach(raw -> observedCaseIds.addAll(normalizer.testcaseIds(raw.path("result"))));
+      observedCaseIds.addAll(repo.caseIdsAssignedToVersion(contestId, problemId, caseSetId));
+      observedCaseIds.removeAll(officialCaseIds);
+      historicalCaseSets = repo.historicalCaseSets(contestId, problemId, observedCaseIds, caseSetId);
+      if (!historicalCaseSets.isEmpty()) repo.reconcileCaseSetAssignments(contestId, problemId, caseSetId, historicalCaseSets);
+    }
+    Map<String,String> knownCaseSets = historicalCaseSets;
+    List<Map<String,Object>> normalizedRanking = ranking.stream()
+        .map(raw -> normalizer.ranking(contestId, problemId, raw, caseSetId, officialCaseIds, knownCaseSets)).toList();
+    Map<String,Map<String,Object>> remaining = repo.currentRowsByTeam(contestId, problemId);
+    Set<String> seen = new HashSet<>();
+    for (Map<String,Object> row : normalizedRanking) {
+      String key = String.valueOf(row.get("teamKey"));
+      if (!seen.add(key)) { alert("DUPLICATE_TEAM", "WARNING", contestId, problemId, key, "榜单存在重复队伍", "同一题目在一次采集中出现重复队伍键", Map.of("teamKey", key)); continue; }
+      Map<String,Object> previous = remaining.remove(key);
+      if (previous == null) {
+        repo.insertRankingEvent(roundId, now, row, "UPSERT", repo.json(evidence(previous, row)));
+        repo.recordCaseBests(row, now);
+        repo.upsertCurrent(row, roundId, now); problemChanges++;
+        evaluateChange(previous, row);
+      } else if (sameCaseEvidence(previous, row)) {
+        // Keep the latest official rank and submission metadata current, but do not turn a
+        // global score/rank recalculation into a per-team performance observation.
+        if (!String.valueOf(previous.get("row_hash")).equals(row.get("rowHash")) || !sameCurrentPresentation(previous, row)) {
+          repo.upsertCurrent(row, roundId, now);
+        }
+      } else {
+        repo.insertRankingEvent(roundId, now, row, "UPDATE", repo.json(evidence(previous, row)));
+        repo.recordCaseBests(row, now);
+        repo.upsertCurrent(row, roundId, now); problemChanges++;
+        evaluateChange(previous, row);
       }
     }
-    return true;
+    for (Map.Entry<String,Map<String,Object>> missing : remaining.entrySet()) {
+      Map<String,Object> deleted = databaseRow(contestId, problemId, missing.getValue());
+      repo.insertRankingEvent(roundId, now, deleted, "DELETE", repo.json(Map.of("reason", "missing_from_source")));
+      repo.deleteCurrent(contestId, problemId, missing.getKey());
+      problemChanges++;
+    }
+    if (stat != null) {
+      Map<String,Object> current = repo.currentStats(contestId, problemId);
+      if (current == null || !String.valueOf(current.get("row_hash")).equals(stat.get("rowHash"))) repo.insertStatsEvent(roundId, now, stat);
+    }
+    repo.recordProblemSample(problemId, now, contestInterval);
+    return new SampleCounts(seen.size(), problemChanges);
   }
 
   private List<JsonNode> fetchAllRanking(String problemId) {

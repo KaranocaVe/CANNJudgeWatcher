@@ -1,4 +1,4 @@
-import type { Alert, Contest, ContestOverview, HistoryResponse, PollRun, Problem, ProblemStats, RankingResponse, Summary, UserDirectoryItem, UserPerformanceResponse } from './types'
+import type { Alert, Contest, ContestOverview, HistoryResponse, PollRun, Problem, ProblemStats, RankingResponse, SamplingGap, Summary, UserDirectoryItem, UserPerformanceResponse } from './types'
 
 type Params = Record<string, string | number | boolean | undefined>
 
@@ -25,6 +25,7 @@ export const api = {
   contestOverview: (contestId: string, signal?: AbortSignal) => request<ContestOverview>('/api/dashboard/contest-overview', { signal }, { contestId }),
   stats: (contestId: string, problemId: string, from?: string, to?: string) => request<{ items: ProblemStats[] }>('/api/problem-stats', {}, { contestId, problemId, from, to }),
   alerts: (params: Params = {}, signal?: AbortSignal) => request<Alert[]>('/api/alerts', { signal }, { limit: 200, ...params }),
+  pollGaps: (signal?: AbortSignal) => request<SamplingGap[]>('/api/polls/gaps', { signal }),
   polls: (signal?: AbortSignal) => request<PollRun[]>('/api/polls', { signal }, { limit: 200 }),
   health: () => request<Record<string, unknown>>('/api/source/health'),
   me: () => request<{ authenticated: boolean; username?: string }>('/api/auth/me'),

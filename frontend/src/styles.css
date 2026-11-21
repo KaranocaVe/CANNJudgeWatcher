@@ -388,3 +388,12 @@ hr { border: 0; border-top: 1px solid var(--border); margin-block: 16px; }
   .case-drawer { inset: auto 0 0; width: 100%; height: 82dvh; border-left: 0; border-top: 1px solid var(--border); border-radius: 14px 14px 0 0; }
   .drawer-head, .drawer-body { padding-inline: 16px; }
 }
+
+.sampling-notice { margin-top: 8px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.sampling-notice[data-warning="true"] { color: #75501c; background: #fff6e7; border-left: 3px solid #bd8737; padding: 8px 12px; }
+.sampling-gaps { padding: 10px 16px; background: #fff6e7; border-left: 3px solid #bd8737; color: #624317; font-size: 13px; line-height: 1.6; }
+.sampling-gaps summary { cursor: pointer; font-weight: 650; }
+.sampling-gaps ul { padding-left: 20px; margin: 6px 0 0; }
+.sampling-gaps + .chart { margin-top: 8px; }
+
+.history-after-gap { display: block; color: #75501c; margin-top: 3px; }

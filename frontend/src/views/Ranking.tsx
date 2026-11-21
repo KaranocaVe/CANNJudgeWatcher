@@ -30,6 +30,7 @@ import {
   Timestamp,
 } from '../ui'
 import { useResource } from '../useResource'
+import { SamplingNotice } from '../sampling'
 import {
   LatencyAxis,
   LatencyMarks,
@@ -244,12 +245,13 @@ export default function RankingView({
               <dd>{data ? model.passing : '—'}</dd>
             </div>
             <div>
-              <dt>更新</dt>
+              <dt>最近变更</dt>
               <dd>
                 <Timestamp value={model.updated} />
               </dd>
             </div>
           </dl>
+          <SamplingNotice snapshot={data?.sampling} />
         </div>
       </div>
 
@@ -378,7 +380,9 @@ export default function RankingView({
             text={
               selectedStatus || deferredQuery
                 ? '没有匹配的在榜队伍'
-                : '该赛题暂无榜单记录'
+                : data?.sampling?.status === 'UNOBSERVED'
+                  ? '该赛题尚无成功采集的榜单'
+                  : '最后一次榜单快照无记录'
             }
           />
         ) : (

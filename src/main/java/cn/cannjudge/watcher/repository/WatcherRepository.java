@@ -1,10 +1,13 @@
 package cn.cannjudge.watcher.repository;
 
 import cn.cannjudge.watcher.model.Models;
+import cn.cannjudge.watcher.service.SamplingCoverage.Gap;
+import cn.cannjudge.watcher.service.SamplingCoverage.Sample;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -16,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -77,6 +81,85 @@ public class WatcherRepository {
   public void finishPollRun(long id, String status, Instant finishedAt, int contests, int contestsPolled, int rows, int changed, String responseHash, String error) {
     jdbc.update("UPDATE poll_run SET status=?,finished_at=?,contests_seen=?,contests_polled=?,rows_seen=?,changed_rows=?,response_hash=?,error_message=? WHERE id=?",
         status, sqlTime(finishedAt), contests, contestsPolled, rows, changed, responseHash, error, id);
+  }
+
+  public void finishInterruptedPolls() {
+    jdbc.update("""
+      UPDATE poll_run SET status='INTERRUPTED', error_message='采集进程中断，完成时间未知'
+      WHERE status='RUNNING'
+      """);
+  }
+
+  public void recordProblemSample(String problemId, Instant sampledAt, int intervalSeconds) {
+    jdbc.update("INSERT INTO problem_poll_sample VALUES (?,?,?) ON CONFLICT DO NOTHING",
+        problemId, sqlTime(sampledAt), intervalSeconds);
+  }
+
+  public Instant latestProblemSample(String contestId, String problemId) {
+    return jdbc.queryForObject("""
+      SELECT max(sampled_at) FROM problem_poll_sample s JOIN problem p ON p.id=s.problem_id
+      WHERE p.contest_id=? AND p.id=?
+      """, (rs, n) -> instant(rs.getTimestamp(1)), contestId, problemId);
+  }
+
+  public boolean legacyContestSample(Instant sampledAt) {
+    if (sampledAt == null) return false;
+    return Boolean.TRUE.equals(jdbc.queryForObject("""
+      SELECT ?::timestamptz < installed_on FROM flyway_schema_history WHERE version='18' AND success
+      """, Boolean.class, sqlTime(sampledAt)));
+  }
+
+  public Instant contestCreatedAt(String contestId) {
+    return jdbc.queryForObject("SELECT created_at FROM contest WHERE id=?",
+        (rs, n) -> instant(rs.getTimestamp(1)), contestId);
+  }
+
+  public List<Sample> problemSamples(String contestId, String problemId, Instant from, Instant to) {
+    return jdbc.query("""
+      SELECT sample.* FROM (
+        (SELECT s.sampled_at,s.poll_interval_seconds FROM problem_poll_sample s
+         JOIN problem p ON p.id=s.problem_id WHERE p.contest_id=? AND s.problem_id=? AND s.sampled_at<?
+         ORDER BY s.sampled_at DESC LIMIT 1)
+        UNION ALL
+        (SELECT s.sampled_at,s.poll_interval_seconds FROM problem_poll_sample s
+         JOIN problem p ON p.id=s.problem_id WHERE p.contest_id=? AND s.problem_id=? AND s.sampled_at>=? AND s.sampled_at<=?)
+        UNION ALL
+        (SELECT s.sampled_at,s.poll_interval_seconds FROM problem_poll_sample s
+         JOIN problem p ON p.id=s.problem_id WHERE p.contest_id=? AND s.problem_id=? AND s.sampled_at>?
+         ORDER BY s.sampled_at LIMIT 1)
+      ) sample ORDER BY sampled_at
+      """, (rs, n) -> new Sample(instant(rs.getTimestamp(1)), rs.getInt(2)),
+        contestId, problemId, sqlTime(from), contestId, problemId, sqlTime(from), sqlTime(to),
+        contestId, problemId, sqlTime(to));
+  }
+
+  public List<Gap> collectorGaps(Instant from, Instant to, long toleranceSeconds, boolean includeTail) {
+    return jdbc.query("""
+      WITH bounds AS (
+        SELECT ?::timestamptz AS lo, ?::timestamptz AS hi,
+          make_interval(secs => ?) AS tolerance, ?::boolean AS tail
+      ), successful AS (
+        (SELECT started_at,finished_at FROM poll_run,bounds
+         WHERE status='SUCCESS' AND finished_at IS NOT NULL AND started_at<lo
+         ORDER BY started_at DESC LIMIT 1)
+        UNION ALL
+        (SELECT started_at,finished_at FROM poll_run,bounds
+         WHERE status='SUCCESS' AND finished_at IS NOT NULL AND started_at>=lo AND started_at<=hi)
+        UNION ALL
+        (SELECT started_at,finished_at FROM poll_run,bounds
+         WHERE status='SUCCESS' AND finished_at IS NOT NULL AND started_at>hi
+         ORDER BY started_at LIMIT 1)
+      ), boundaries AS (
+        SELECT lag(finished_at) OVER (ORDER BY started_at) AS prior,started_at AS next FROM successful
+        UNION ALL
+        SELECT (SELECT max(finished_at) FROM successful WHERE started_at<=hi),hi FROM bounds
+        WHERE tail AND NOT EXISTS (SELECT 1 FROM successful WHERE started_at>hi)
+      )
+      SELECT greatest(prior,lo) AS gap_start, least(next,hi) AS gap_end
+      FROM boundaries,bounds WHERE next-prior>tolerance AND greatest(prior,lo)<least(next,hi)
+      ORDER BY gap_start
+      """, (rs, n) -> new Gap(instant(rs.getTimestamp(1)), instant(rs.getTimestamp(2)), "COLLECTOR"),
+        sqlTime(from), sqlTime(to), toleranceSeconds, includeTail);
   }
 
   public void markContestPolled(String id, Instant at) { jdbc.update("UPDATE contest SET last_poll_at=?,updated_at=now() WHERE id=?", sqlTime(at), id); }
@@ -529,7 +612,7 @@ public class WatcherRepository {
   public boolean alertExists(long id) { return jdbc.queryForObject("SELECT count(*) FROM alert_event WHERE id=?", Integer.class, id) > 0; }
 
   public Map<String,Object> pollSummary() {
-    var row = jdbc.queryForMap("SELECT count(*) FILTER (WHERE status='SUCCESS') successful,count(*) FILTER (WHERE status='FAILED') failed,max(finished_at) last_finished FROM poll_run");
+    var row = jdbc.queryForMap("SELECT count(*) FILTER (WHERE status='SUCCESS') successful,count(*) FILTER (WHERE status='FAILED') failed,count(*) FILTER (WHERE status='INTERRUPTED') interrupted,max(finished_at) last_finished FROM poll_run");
     row.put("activeContests", jdbc.queryForObject("SELECT count(*) FROM contest WHERE status='ACTIVE' AND monitoring_enabled", Integer.class));
     row.put("openAlerts", jdbc.queryForObject("SELECT count(*) FROM alert_event WHERE acknowledged_at IS NULL", Integer.class));
     row.put("latestPoll", jdbc.queryForList("SELECT id,started_at,finished_at,status,contests_polled,rows_seen,changed_rows,error_message FROM poll_run ORDER BY id DESC LIMIT 1"));
@@ -540,17 +623,30 @@ public class WatcherRepository {
 
   public int consecutiveFailures() { Integer n = jdbc.queryForObject("SELECT count(*) FROM (SELECT status FROM poll_run ORDER BY id DESC LIMIT 2) x WHERE status='FAILED'", Integer.class); return n == null ? 0 : n; }
 
-  public boolean latestPollHealthy() {
-    List<String> statuses = jdbc.query("SELECT status FROM poll_run ORDER BY id DESC LIMIT 1", (rs, n) -> rs.getString(1));
-    return !statuses.isEmpty() && "SUCCESS".equals(statuses.getFirst());
+  // Keep the PostgreSQL session open for the round. A process or database restart releases the lock.
+  public boolean withPollLock(Runnable collect) {
+    return Boolean.TRUE.equals(jdbc.execute((ConnectionCallback<Boolean>) connection -> {
+      if (!pollLock(connection, "SELECT pg_try_advisory_lock(18377293, 1)")) return false;
+      try {
+        collect.run();
+        return true;
+      } finally {
+        try {
+          pollLock(connection, "SELECT pg_advisory_unlock(18377293, 1)");
+        } catch (SQLException error) {
+          // Discard a connection whose session-level lock could not be released.
+          connection.abort(Runnable::run);
+          throw error;
+        }
+      }
+    }));
   }
 
-  public boolean tryAcquirePollLock() {
-    List<Integer> updated = jdbc.query("UPDATE poll_lease SET locked_until=now() + interval '10 minutes' WHERE id=1 AND locked_until <= now() RETURNING 1", (rs, n) -> rs.getInt(1));
-    return !updated.isEmpty();
+  private boolean pollLock(Connection connection, String sql) throws SQLException {
+    try (var statement = connection.prepareStatement(sql); var result = statement.executeQuery()) {
+      return result.next() && result.getBoolean(1);
+    }
   }
-
-  public void releasePollLock() { jdbc.update("UPDATE poll_lease SET locked_until=to_timestamp(0) WHERE id=1"); }
 
   private Models.Contest mapContest(ResultSet rs, int n) throws SQLException {
     return new Models.Contest(rs.getString("id"), rs.getString("slug"), rs.getString("title"), rs.getString("description"),

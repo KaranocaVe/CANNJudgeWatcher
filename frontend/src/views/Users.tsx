@@ -296,8 +296,8 @@ export default function UserDetailView({
               <tr>
                 <th scope="col">赛事 / 题目</th>
                 <th scope="col">队伍</th>
-                <th scope="col">当前状态</th>
-                <th scope="col">当前名次</th>
+                <th scope="col">最近记录状态</th>
+                <th scope="col">最近记录名次</th>
                 <th scope="col">历史最好</th>
                 <th scope="col">性能记录</th>
                 <th scope="col">最后观测</th>

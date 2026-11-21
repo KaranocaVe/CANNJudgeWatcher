@@ -22,10 +22,11 @@ import {
   changeText,
   changeClass,
 } from '../domain'
-import type { CaseBestSummary, HistoryPoint } from '../types'
+import type { CaseBestSummary, HistoryPoint, SamplingGap } from '../types'
 import { api } from '../api'
 import { isAbortError } from '../useResource'
 import { Chart, type ChartOption } from '../chart'
+import { SamplingGaps, breakAtGaps, gapArea } from '../sampling'
 
 export default function HistoryView({
   contestId,
@@ -44,6 +45,7 @@ export default function HistoryView({
   contestTitle: string
   onBack: () => void
 }) {
+  const [gaps, setGaps] = useState<SamplingGap[]>([])
   const [days, setDays] = useState('all')
   const [history, setHistory] = useState<HistoryPoint[]>([])
   const [caseBests, setCaseBests] = useState<CaseBestSummary>({
@@ -61,6 +63,8 @@ export default function HistoryView({
     }
     const controller = new AbortController()
     setLoading(true)
+    setHistory([])
+    setGaps([])
     setLoadError('')
     const from =
       days === 'all' ? '1970-01-01T00:00:00.000Z' : rangeStart(Number(days))
@@ -72,6 +76,7 @@ export default function HistoryView({
       .then((data) => {
         if (!controller.signal.aborted) {
           setHistory(data.items)
+          setGaps(data.gaps ?? [])
           setCaseBests(data.caseBests || { global: {}, teams: {} })
         }
       })
@@ -84,11 +89,23 @@ export default function HistoryView({
       })
     return () => controller.abort()
   }, [contestId, problemId, teamKey, days])
+  const firstPoint = history[0]?.observed_at
+  const lastPoint = history.at(-1)?.observed_at
+  const firstGap = gaps[0]?.from
+  const lastGap = gaps.at(-1)?.to
+  const axisMin =
+    firstGap && firstPoint && Date.parse(firstGap) < Date.parse(firstPoint)
+      ? firstGap
+      : undefined
+  const axisMax =
+    lastGap && lastPoint && Date.parse(lastGap) > Date.parse(lastPoint)
+      ? lastGap
+      : undefined
   const chart = useMemo<ChartOption>(
     () => ({
       tooltip: { trigger: 'axis' },
       grid: { left: 56, right: 28, top: 36, bottom: 36 },
-      xAxis: { type: 'time' },
+      xAxis: { type: 'time', min: axisMin, max: axisMax },
       yAxis: {
         type: 'value',
         name: '官方名次',
@@ -100,18 +117,31 @@ export default function HistoryView({
         {
           name: '官方名次',
           type: 'line',
-          smooth: true,
-          showSymbol: false,
-          data: history
-            .filter((p) => p.rank != null)
-            .map((p) => [p.observed_at, Number(p.rank)]),
+          connectNulls: false,
+          symbolSize: 5,
+          data: breakAtGaps(
+            history.flatMap((point) =>
+              point.observed_at
+                ? [
+                    [
+                      point.observed_at,
+                      point.event_type === 'DELETE'
+                        ? null
+                        : (point.rank ?? null),
+                    ],
+                  ]
+                : [],
+            ),
+            gaps,
+          ),
+          markArea: gapArea(gaps),
           itemStyle: { color: '#006fee' },
           lineStyle: { width: 2 },
           areaStyle: { color: 'rgba(0, 111, 238, .08)' },
         },
       ],
     }),
-    [history],
+    [history, gaps, axisMin, axisMax],
   )
   const caseIds = useMemo(() => {
     const ids: string[] = []
@@ -160,10 +190,12 @@ export default function HistoryView({
     }
     type ObservationRow = {
       observedAt?: string
+      afterGap: boolean
       cases: Record<string, CaseObservation>
     }
     const grouped = new Map<string, Observation>()
     history.forEach((point) => {
+      if (point.event_type === 'DELETE') return
       const groupKey = point.observed_at || `unknown-${grouped.size}`
       const row: Observation = grouped.get(groupKey) || {
         observedAt: point.observed_at,
@@ -178,6 +210,7 @@ export default function HistoryView({
       grouped.set(groupKey, row)
     })
     const previousByCase = new Map<string, number | undefined>()
+    let previousTime = -Infinity
     return Array.from(grouped.values())
       .sort(
         (a, b) =>
@@ -185,6 +218,13 @@ export default function HistoryView({
           new Date(b.observedAt || 0).getTime(),
       )
       .map<ObservationRow>((row) => {
+        const time = Date.parse(row.observedAt ?? '')
+        const afterGap = gaps.some(
+          (gap) =>
+            previousTime <= Date.parse(gap.from) && Date.parse(gap.to) <= time,
+        )
+        if (afterGap) previousByCase.clear()
+        previousTime = time
         const cases: Record<string, CaseObservation> = {}
         caseIds.forEach((caseId) => {
           const observation = row.values.get(caseId)
@@ -193,9 +233,9 @@ export default function HistoryView({
           cases[caseId] = { value, status: observation?.status, previous }
           previousByCase.set(caseId, value)
         })
-        return { observedAt: row.observedAt, cases }
+        return { observedAt: row.observedAt, afterGap, cases }
       })
-  }, [caseIds, history])
+  }, [caseIds, history, gaps])
   const performanceChart = useMemo<ChartOption>(() => {
     const baseline = new Map<string, number>()
     history.forEach((point) =>
@@ -205,7 +245,9 @@ export default function HistoryView({
         if (value != null && !baseline.has(id)) baseline.set(id, value)
       }),
     )
-    const data = history.flatMap((point) => {
+    const data = history.flatMap<[string, number | null]>((point) => {
+      if (!point.observed_at) return []
+      if (point.event_type === 'DELETE') return [[point.observed_at, null]]
       const byCase = new Map(
         (point.result || []).map((item, index) => [caseKey(item, index), item]),
       )
@@ -218,12 +260,8 @@ export default function HistoryView({
       const validRatios = ratios.filter(
         (value): value is number => value != null,
       )
-      if (
-        !point.observed_at ||
-        !ratios.length ||
-        validRatios.length !== ratios.length
-      )
-        return []
+      if (!ratios.length || validRatios.length !== ratios.length)
+        return [[point.observed_at, null]]
       const index =
         Math.exp(
           validRatios.reduce((sum, value) => sum + Math.log(value), 0) /
@@ -237,7 +275,7 @@ export default function HistoryView({
         valueFormatter: (value) => `${Number(value).toFixed(2)} 指数`,
       },
       grid: { left: 56, right: 28, top: 36, bottom: 36 },
-      xAxis: { type: 'time' },
+      xAxis: { type: 'time', min: axisMin, max: axisMax },
       yAxis: {
         type: 'value',
         name: '性能指数',
@@ -248,9 +286,10 @@ export default function HistoryView({
         {
           name: '归一化性能',
           type: 'line',
-          smooth: true,
-          showSymbol: false,
-          data,
+          connectNulls: false,
+          symbolSize: 5,
+          data: breakAtGaps(data, gaps),
+          markArea: gapArea(gaps),
           itemStyle: { color: '#17c964' },
           lineStyle: { color: '#17c964', width: 2 },
           areaStyle: { color: 'rgba(23, 201, 100, .13)' },
@@ -263,7 +302,7 @@ export default function HistoryView({
         },
       ],
     }
-  }, [caseIds, history])
+  }, [caseIds, history, gaps, axisMin, axisMax])
   if (!teamName)
     return (
       <Panel className="content-card empty-card">
@@ -301,12 +340,20 @@ export default function HistoryView({
             <option value="30">最近 30 天</option>
           </SelectField>
         </Toolbar>
+        <SamplingGaps gaps={gaps} />
         {loading ? (
           <LoadingRows />
         ) : history.length ? (
           <Chart option={chart} height={360} />
         ) : (
-          <Empty text={loadError || '该时间范围内暂无历史观测'} />
+          <Empty
+            text={
+              loadError ||
+              (gaps.length
+                ? '该范围内没有变化记录，且存在缺采时段'
+                : '该时间范围内没有记录到榜单变化')
+            }
+          />
         )}
       </Panel>
       <Panel className="content-card history-card">
@@ -327,8 +374,12 @@ export default function HistoryView({
       </Panel>
       <div className="history-summary">
         <StatCard
-          label="当前官方名次"
-          value={latest?.rank == null ? '—' : `#${latest.rank}`}
+          label="最后记录的官方名次"
+          value={
+            latest?.rank == null || latest.event_type === 'DELETE'
+              ? '—'
+              : `#${latest.rank}`
+          }
           hint="最近一次观测"
           icon={Table2}
         />
@@ -372,7 +423,14 @@ export default function HistoryView({
                   <tbody>
                     {visible.map((row) => (
                       <tr key={row.observedAt}>
-                        <th scope="row">{fmt(row.observedAt)}</th>
+                        <th scope="row">
+                          {fmt(row.observedAt)}
+                          {row.afterGap && (
+                            <small className="history-after-gap">
+                              缺采后观测
+                            </small>
+                          )}
+                        </th>
                         {caseIds.map((key) => {
                           const observation = row.cases[key]
                           return (
@@ -392,7 +450,7 @@ export default function HistoryView({
                                       observation.previous,
                                     )}
                                   >
-                                    较上次{' '}
+                                    较上次观测{' '}
                                     {changeText(
                                       observation.value,
                                       observation.previous,

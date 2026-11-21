@@ -14,6 +14,7 @@ import type { ContestOverview, Problem } from '../types'
 import { api } from '../api'
 import { isAbortError } from '../useResource'
 import { Chart, type ChartOption } from '../chart'
+import { SamplingGaps, SamplingNotice, breakAtGaps, gapArea } from '../sampling'
 
 type OverviewItem = {
   problem: Problem
@@ -121,21 +122,15 @@ export default function OverviewView({
     [overview.activity],
   )
   const activityChart = useMemo<ChartOption>(() => {
-    const labels = activity.map((point) =>
-      new Date(point.timestamp).toLocaleString('zh-CN', {
-        month: 'numeric',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
-    )
+    const gaps = overview.gaps ?? []
     return {
       tooltip: { trigger: 'axis' },
       legend: { top: 0, textStyle: { color: '#667085' } },
       grid: { left: 42, right: 18, top: 34, bottom: 42 },
       xAxis: {
-        type: 'category',
-        data: labels,
+        type: 'time',
+        min: overview.from,
+        max: overview.to,
         axisLabel: { color: '#7b8790', hideOverlap: true },
       },
       yAxis: {
@@ -151,9 +146,13 @@ export default function OverviewView({
           name: '性能变好',
           type: 'line',
           stack: 'performance',
-          smooth: true,
-          showSymbol: false,
-          data: activity.map((point) => point.improvements),
+          connectNulls: false,
+          symbolSize: 4,
+          data: breakAtGaps(
+            activity.map((point) => [point.timestamp, point.improvements]),
+            gaps,
+          ),
+          markArea: gapArea(gaps),
           itemStyle: { color: '#17c964' },
           lineStyle: { color: '#17c964', width: 2 },
           areaStyle: { color: 'rgba(23, 201, 100, .20)' },
@@ -162,9 +161,12 @@ export default function OverviewView({
           name: '性能变差',
           type: 'line',
           stack: 'performance',
-          smooth: true,
-          showSymbol: false,
-          data: activity.map((point) => point.regressions),
+          connectNulls: false,
+          symbolSize: 4,
+          data: breakAtGaps(
+            activity.map((point) => [point.timestamp, point.regressions]),
+            gaps,
+          ),
           itemStyle: { color: '#f31260' },
           lineStyle: { color: '#f31260', width: 2 },
           areaStyle: { color: 'rgba(243, 18, 96, .16)' },
@@ -172,29 +174,41 @@ export default function OverviewView({
         {
           name: '离榜/删除',
           type: 'bar',
-          data: activity.map((point) => point.deletes),
+          data: breakAtGaps(
+            activity.map((point) => [point.timestamp, point.deletes]),
+            gaps,
+          ),
           itemStyle: { color: '#f5a524', borderRadius: [4, 4, 0, 0] },
           barMaxWidth: 18,
         },
       ],
     }
-  }, [activity])
+  }, [activity, overview.gaps, overview.from, overview.to])
   const totalPerformanceChanges = activity.reduce(
     (sum, point) => sum + point.improvements + point.regressions,
     0,
   )
   return (
     <div className="panel-stack">
+      <SamplingNotice snapshot={overview.sampling} />
       <div className="stat-grid">
         <StatCard
           label="在榜记录"
-          value={items.reduce((sum, i) => sum + i.rowCount, 0)}
+          value={
+            loading || loadError
+              ? '—'
+              : items.reduce((sum, i) => sum + i.rowCount, 0)
+          }
           hint="当前赛事"
           icon={Table2}
         />
         <StatCard
           label="通过队伍"
-          value={items.reduce((sum, i) => sum + i.passCount, 0)}
+          value={
+            loading || loadError
+              ? '—'
+              : items.reduce((sum, i) => sum + i.passCount, 0)
+          }
           hint="当前赛事"
           icon={Users}
         />
@@ -216,9 +230,12 @@ export default function OverviewView({
           <div>
             <h2>榜单活跃度</h2>
           </div>
-          <Chip>{totalPerformanceChanges} 次性能变化</Chip>
+          {!loading && !loadError && (
+            <Chip>{totalPerformanceChanges} 次已记录的性能变化</Chip>
+          )}
         </PanelHeader>
         <PanelBody>
+          <SamplingGaps gaps={overview.gaps ?? []} />
           {loading ? (
             <LoadingRows />
           ) : loadError ? (
@@ -226,7 +243,13 @@ export default function OverviewView({
           ) : activity.length ? (
             <Chart option={activityChart} height={280} />
           ) : (
-            <Empty text="最近 7 天暂无榜单变动" />
+            <Empty
+              text={
+                overview.gaps?.length
+                  ? '最近 7 天未记录榜单变动，期间存在缺采'
+                  : '最近 7 天未记录榜单变动'
+              }
+            />
           )}
         </PanelBody>
       </Panel>
