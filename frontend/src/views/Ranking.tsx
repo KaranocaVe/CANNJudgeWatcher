@@ -1,20 +1,18 @@
 import { useCallback, useDeferredValue, useMemo, useState } from 'react'
 import {
-  Check,
-  Clock3,
-  ListOrdered,
-  Percent,
+  ArrowRight,
+  ArrowUpRight,
+  Grid3X3,
+  List,
   RefreshCw,
   Search,
 } from 'lucide-react'
 import { api } from '../api'
 import {
-  caseDeltaClass,
   caseDeltaText,
   caseKey,
   caseSetForKey,
   caseVersionLabel,
-  teamLabel,
   timeValue,
 } from '../domain'
 import { formatMetric, statusLabel } from '../format'
@@ -28,11 +26,16 @@ import {
   PagedRows,
   Panel,
   SelectField,
-  StatCard,
   Status,
   Timestamp,
 } from '../ui'
 import { useResource } from '../useResource'
+import LatencyDistribution from './LatencyDistribution'
+import RankingEvidence, {
+  CaseReading,
+  nameOf,
+  type IndexedRanking,
+} from './RankingEvidence'
 
 type Props = {
   contest: Contest
@@ -76,6 +79,11 @@ export default function RankingView({
   const [status, setStatus] = useState('')
   const [query, setQuery] = useState('')
   const [allVersionsFor, setAllVersionsFor] = useState('')
+  const [mode, setMode] = useState<'list' | 'matrix'>('list')
+  const [caseSelection, setCaseSelection] = useState('')
+  const [inspectedTeam, setInspectedTeam] = useState<IndexedRanking | null>(
+    null,
+  )
   const deferredQuery = useDeferredValue(query.trim().toLowerCase())
   const fetchRankings = useCallback(
     (signal: AbortSignal) => api.rankings(contest.id, problemId, {}, signal),
@@ -146,7 +154,32 @@ export default function RankingView({
   const allVersions = allVersionsFor === problemId
   const cases = allVersions ? model.allCases : model.activeCases
 
-  if (!problems.length)
+  const caseOptions = useMemo(
+    () =>
+      cases.map((id, index) => ({
+        id,
+        label: `用例 ${String(index + 1).padStart(2, '0')}${allVersions && caseVersionLabel(id) ? ` · ${caseVersionLabel(id)}` : ''}`,
+      })),
+    [cases, allVersions],
+  )
+  const selectedCase = cases.includes(caseSelection)
+    ? caseSelection
+    : (cases[0] ?? '')
+  const selectedLabel = caseOptions.find(
+    (item) => item.id === selectedCase,
+  )?.label
+  const values = useMemo(
+    () =>
+      model.indexed.flatMap(({ current }) => {
+        const item = current.get(selectedCase)
+        const time = timeValue(item?.time)
+        return item?.status === 'Pass' && time != null ? [time] : []
+      }),
+    [model.indexed, selectedCase],
+  )
+
+  const problem = problems.find((item) => item.id === problemId)
+  if (!problem)
     return (
       <Panel>
         <Empty text="这场赛事暂无公开题目" />
@@ -154,44 +187,115 @@ export default function RankingView({
     )
 
   return (
-    <div className="panel-stack">
-      <div className="stat-grid">
-        <StatCard
-          icon={ListOrdered}
-          label="在榜队伍"
-          value={data ? model.indexed.length : '—'}
-        />
-        <StatCard
-          icon={Check}
-          label="通过队伍"
-          value={data ? model.passing : '—'}
-        />
-        <StatCard
-          icon={Percent}
-          label="通过率"
-          value={
-            model.indexed.length
-              ? `${Math.round((model.passing / model.indexed.length) * 100)}%`
-              : '—'
-          }
-        />
-        <StatCard
-          icon={Clock3}
-          label="榜单最近更新"
-          value={<Timestamp value={model.updated} />}
+    <div className="ranking-layout">
+      <div className="ranking-intro">
+        <div className="ranking-lead">
+          <h1>{problem.title}</h1>
+          {problems.length > 1 && (
+            <SelectField
+              aria-label="选择题目"
+              className="topic-switch"
+              value={problemId}
+              onChange={(event) => {
+                setStatus('')
+                setAllVersionsFor('')
+                setCaseSelection('')
+                setInspectedTeam(null)
+                onProblemChange(event.target.value)
+              }}
+            >
+              {problems.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.title}
+                </option>
+              ))}
+            </SelectField>
+          )}
+          <dl className="edition-meta">
+            <div>
+              <dt>在榜</dt>
+              <dd>{data ? model.indexed.length : '—'}</dd>
+            </div>
+            <div>
+              <dt>通过</dt>
+              <dd>{data ? model.passing : '—'}</dd>
+            </div>
+            <div>
+              <dt>更新</dt>
+              <dd>
+                <Timestamp value={model.updated} />
+              </dd>
+            </div>
+          </dl>
+        </div>
+        <LatencyDistribution
+          selected={selectedCase}
+          cases={caseOptions}
+          values={values}
+          onSelect={setCaseSelection}
         />
       </div>
-      <Panel className="ranking-card">
-        <div className="ranking-heading">
-          <div>
-            <h2>赛题榜单</h2>
-            <span>
-              {data
-                ? `${filtered.length} 支队伍 · ${cases.length} 个测试点`
-                : '逐测试点成绩'}
-            </span>
+
+      <section className="ranking-results" aria-labelledby="ranking-title">
+        <div className="results-bar">
+          <div className="results-heading">
+            <h2 id="ranking-title">官方榜单</h2>
+            {data && <span>{filtered.length} 支队伍</span>}
           </div>
-          {activeSet && model.allCases.length > model.activeCases.length && (
+          <div className="results-tools">
+            <Input
+              aria-label="搜索用户或队伍"
+              placeholder="搜索队伍或提交者"
+              className="search-input"
+              type="search"
+              leading={<Search size={15} />}
+              value={query}
+              onValueChange={setQuery}
+            />
+            <SelectField
+              aria-label="筛选状态"
+              className="status-select"
+              value={selectedStatus}
+              onChange={(event) => setStatus(event.target.value)}
+            >
+              <option value="">全部状态</option>
+              {model.statuses.map((item) => (
+                <option key={item} value={item}>
+                  {statusLabel(item)}
+                </option>
+              ))}
+            </SelectField>
+            <Button
+              leading={<RefreshCw size={15} />}
+              onClick={() => void refresh()}
+              busy={pending}
+              aria-label="刷新榜单"
+            />
+            <div
+              className="segmented mode-switch"
+              role="group"
+              aria-label="榜单显示方式"
+            >
+              <button
+                type="button"
+                aria-pressed={mode === 'list'}
+                onClick={() => setMode('list')}
+              >
+                <List size={15} /> <span>列表</span>
+              </button>
+              <button
+                type="button"
+                aria-pressed={mode === 'matrix'}
+                onClick={() => setMode('matrix')}
+              >
+                <Grid3X3 size={14} /> <span>矩阵</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        {activeSet && model.allCases.length > model.activeCases.length && (
+          <div className="version-bar">
+            <span>测试点版本</span>
             <div className="segmented" role="group" aria-label="测试点版本">
               <button
                 type="button"
@@ -208,56 +312,11 @@ export default function RankingView({
                 全部版本
               </button>
             </div>
-          )}
-        </div>
-        <div className="toolbar ranking-tools">
-          <SelectField
-            aria-label="选择题目"
-            className="topic-select"
-            value={problemId}
-            onChange={(event) => {
-              setStatus('')
-              setAllVersionsFor('')
-              onProblemChange(event.target.value)
-            }}
-          >
-            {problems.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.title}
-              </option>
-            ))}
-          </SelectField>
-          <Input
-            aria-label="搜索用户或队伍"
-            placeholder="搜索用户或队伍"
-            className="search-input"
-            type="search"
-            leading={<Search size={15} />}
-            value={query}
-            onValueChange={setQuery}
-          />
-          <SelectField
-            aria-label="筛选状态"
-            className="status-select"
-            value={selectedStatus}
-            onChange={(event) => setStatus(event.target.value)}
-          >
-            <option value="">全部状态</option>
-            {model.statuses.map((item) => (
-              <option key={item} value={item}>
-                {statusLabel(item)}
-              </option>
-            ))}
-          </SelectField>
-          <Button
-            leading={<RefreshCw size={15} />}
-            onClick={() => void refresh()}
-            busy={pending}
-            aria-label="刷新榜单"
-          >
-            <span>刷新</span>
-          </Button>
-        </div>
+          </div>
+        )}
+        {mode === 'matrix' && cases.length > 0 && (
+          <div className="matrix-legend"><span aria-hidden="true" />色阶表示通过耗时相对全场历史最佳的倍数</div>
+        )}
         {error && (
           <div className="error-line" role="alert">
             {error}
@@ -279,150 +338,233 @@ export default function RankingView({
             items={filtered}
             size={25}
           >
-            {(visible) => (
-              <DataTable
-                aria-label="官方榜单及逐测试点成绩"
-                className="ranking-table"
-              >
-                <thead>
-                  <tr>
-                    <th scope="col" className="rank-column">
-                      名次
-                    </th>
-                    <th scope="col" className="team-column">
-                      队伍 / 提交者
-                    </th>
-                    <th scope="col">状态</th>
-                    <th scope="col">记录</th>
-                    {cases.map((key, index) => (
-                      <th
-                        scope="col"
-                        className="case-column"
-                        key={key}
-                        title={key}
-                      >
-                        <strong>用例 {index + 1}</strong>
-                        {allVersions && caseVersionLabel(key) && (
-                          <small>版本 {caseVersionLabel(key)}</small>
-                        )}
-                        <small>
-                          全场最快{' '}
-                          {bests.global[key] == null
-                            ? '—'
-                            : `${formatMetric(bests.global[key])} μs`}
-                        </small>
-                      </th>
-                    ))}
-                    <th scope="col">最后提交</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visible.map(({ row, current, previous }) => (
-                    <tr key={row.team_key ?? `${row.team_name}-${row.rank}`}>
-                      <td className="rank-column">
-                        <div className="rank-cell">
-                          <strong
-                            className={row.rank === 1 ? 'rank-first' : ''}
-                          >
-                            {row.rank == null ? '—' : `#${row.rank}`}
-                          </strong>
-                          <RankMovement
-                            rank={row.rank}
-                            previous={row.previous_rank}
-                          />
-                        </div>
-                      </td>
-                      <th scope="row" className="team-column">
-                        {row.user_id || row.user_nickname ? (
+            {(visible) =>
+              mode === 'list' ? (
+                <div className="results-list">
+                  <div className="result-row result-labels" aria-hidden="true">
+                    <span>名次</span>
+                    <span>队伍 / 提交者</span>
+                    <span>状态</span>
+                    <span>
+                      {selectedLabel ? `${selectedLabel}耗时` : '耗时'}
+                    </span>
+                    <span />
+                  </div>
+                  <ol aria-label="官方名次列表">
+                    {visible.map((indexed) => {
+                      const { row, current } = indexed
+                      return (
+                        <li key={row.team_key ?? `${nameOf(row)}-${row.rank}`}>
                           <button
-                            className="team-link"
-                            onClick={() =>
-                              onUserSelect({
-                                id: row.user_id,
-                                nickname: row.user_nickname,
-                                name:
-                                  row.user_nickname ||
-                                  teamLabel(
-                                    row.team_name ||
-                                      row.user_nickname ||
-                                      row.submitter_nickname,
-                                  ),
-                              })
-                            }
+                            className="result-row result-item"
+                            data-podium={row.rank != null && row.rank <= 3}
+                            data-leader={row.rank === 1}
+                            type="button"
+                            onClick={() => setInspectedTeam(indexed)}
+                            aria-haspopup="dialog"
                           >
-                            {teamLabel(
-                              row.team_name ||
-                                row.user_nickname ||
-                                row.submitter_nickname,
-                            )}
+                            <span className="result-rank">
+                              <strong>
+                                {row.rank == null
+                                  ? '—'
+                                  : String(row.rank).padStart(2, '0')}
+                              </strong>
+                              <RankMovement
+                                rank={row.rank}
+                                previous={row.previous_rank}
+                              />
+                            </span>
+                            <span className="result-team">
+                              <strong>{nameOf(row)}</strong>
+                              {row.team_name &&
+                                (row.submitter_nickname ||
+                                  row.user_nickname) && (
+                                  <small>
+                                    {row.submitter_nickname ||
+                                      row.user_nickname}
+                                  </small>
+                                )}
+                            </span>
+                            <span className="result-state">
+                              <Status value={row.status} />
+                            </span>
+                            <span className="result-time">
+                              <CaseReading item={current.get(selectedCase)} />
+                            </span>
+                            <ArrowRight
+                              className="result-arrow"
+                              size={17}
+                              aria-hidden
+                            />
                           </button>
-                        ) : (
-                          <span>
-                            {teamLabel(
-                              row.team_name ||
-                                row.user_nickname ||
-                                row.submitter_nickname,
-                            )}
-                          </span>
-                        )}
-                        {row.team_name &&
-                          (row.submitter_nickname || row.user_nickname) && (
-                            <small>
-                              {row.submitter_nickname || row.user_nickname}
-                            </small>
-                          )}
+                        </li>
+                      )
+                    })}
+                  </ol>
+                </div>
+              ) : (
+                <DataTable
+                  aria-label="官方榜单及逐测试点成绩"
+                  className="ranking-table"
+                >
+                  <thead>
+                    <tr>
+                      <th scope="col" className="rank-column">
+                        名次
                       </th>
-                      <td>
-                        <Status value={row.status} />
-                      </td>
-                      <td className="numeric">{row.record_count ?? '—'}</td>
-                      {cases.map((key) => {
-                        const item = current.get(key)
-                        const before = previous.get(key)
-                        const time = timeValue(item?.time)
-                        const best = row.team_key
-                          ? bests.teams[row.team_key]?.[key]
-                          : undefined
-                        return (
-                          <td className="case-column" key={key}>
-                            <strong className="numeric">
-                              {time == null
-                                ? item
-                                  ? statusLabel(item.status)
-                                  : '—'
-                                : `${formatMetric(time)} μs`}
-                            </strong>
-                            {!!time &&
-                              item?.status &&
-                              item.status !== 'Pass' && (
-                                <small>{statusLabel(item.status)}</small>
-                              )}
-                            {best != null && (
-                              <small>历史最佳 {formatMetric(best)} μs</small>
-                            )}
-                            {item && (
-                              <small className={caseDeltaClass(item, before)}>
-                                {caseDeltaText(item, before)}
-                              </small>
-                            )}
-                          </td>
-                        )
-                      })}
-                      <td>
-                        <Timestamp
-                          value={
-                            row.create_time || row.updated_at || row.observed_at
-                          }
-                        />
-                      </td>
+                      <th scope="col" className="team-column">
+                        队伍 / 提交者
+                      </th>
+                      <th scope="col">状态</th>
+                      <th scope="col">记录</th>
+                      {cases.map((key, index) => (
+                        <th
+                          scope="col"
+                          className="case-column"
+                          key={key}
+                          title={key}
+                        >
+                          <strong>用例 {index + 1}</strong>
+                          {allVersions && caseVersionLabel(key) && (
+                            <small>版本 {caseVersionLabel(key)}</small>
+                          )}
+                          <small>
+                            全场最快{' '}
+                            {bests.global[key] == null
+                              ? '—'
+                              : `${formatMetric(bests.global[key])} μs`}
+                          </small>
+                        </th>
+                      ))}
+                      <th scope="col">最后提交</th>
                     </tr>
-                  ))}
-                </tbody>
-              </DataTable>
-            )}
+                  </thead>
+                  <tbody>
+                    {visible.map((indexed) => {
+                      const { row, current, previous } = indexed
+                      return (
+                        <tr
+                          key={row.team_key ?? `${row.team_name}-${row.rank}`}
+                        >
+                          <td className="rank-column">
+                            <div className="rank-cell">
+                              <strong
+                                className={row.rank === 1 ? 'rank-first' : ''}
+                              >
+                                {row.rank == null ? '—' : `#${row.rank}`}
+                              </strong>
+                              <RankMovement
+                                rank={row.rank}
+                                previous={row.previous_rank}
+                              />
+                            </div>
+                          </td>
+                          <th scope="row" className="team-column">
+                            <button
+                              className="team-link"
+                              type="button"
+                              onClick={() => setInspectedTeam(indexed)}
+                              aria-haspopup="dialog"
+                            >
+                              {nameOf(row)}{' '}
+                              <ArrowUpRight size={12} aria-hidden />
+                            </button>
+                            {row.team_name &&
+                              (row.submitter_nickname || row.user_nickname) && (
+                                <small>
+                                  {row.submitter_nickname || row.user_nickname}
+                                </small>
+                              )}
+                          </th>
+                          <td>
+                            <Status value={row.status} />
+                          </td>
+                          <td className="numeric">{row.record_count ?? '—'}</td>
+                          {cases.map((key) => {
+                            const item = current.get(key)
+                            const before = previous.get(key)
+                            const time = timeValue(item?.time)
+                            const best = bests.global[key]
+                            const ratio =
+                              item?.status === 'Pass' && best && time != null
+                                ? time / best
+                                : undefined
+                            const level =
+                              ratio == null
+                                ? 0
+                                : Math.min(
+                                    4,
+                                    1 +
+                                      Math.floor(
+                                        Math.log2(Math.max(1, ratio)) * 2,
+                                      ),
+                                  )
+                            const description = [
+                              ratio == null
+                                ? undefined
+                                : `${ratio.toFixed(2)}× 全场历史最短耗时`,
+                              item?.status
+                                ? statusLabel(item.status)
+                                : undefined,
+                              item ? caseDeltaText(item, before) : undefined,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')
+                            return (
+                              <td className="matrix-cell" key={key}>
+                                <button
+                                  type="button"
+                                  data-level={level}
+                                  title={description || '暂无数据'}
+                                  onClick={() => {
+                                    setCaseSelection(key)
+                                    setInspectedTeam(indexed)
+                                  }}
+                                  aria-haspopup="dialog"
+                                >
+                                  <CaseReading item={item} />
+                                </button>
+                              </td>
+                            )
+                          })}
+                          <td>
+                            <Timestamp
+                              value={
+                                row.create_time ||
+                                row.updated_at ||
+                                row.observed_at
+                              }
+                            />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </DataTable>
+              )
+            }
           </PagedRows>
         )}
-      </Panel>
+      </section>
+      {inspectedTeam && (
+        <RankingEvidence
+          indexed={inspectedTeam}
+          cases={cases}
+          bests={bests}
+          selectedCase={selectedCase}
+          allVersions={allVersions}
+          onClose={() => setInspectedTeam(null)}
+          onProfile={() => {
+            const row = inspectedTeam.row
+            setInspectedTeam(null)
+            onUserSelect({
+              id: row.user_id,
+              nickname: row.user_nickname,
+              name: row.user_nickname || nameOf(row),
+            })
+          }}
+        />
+      )}
     </div>
   )
 }

@@ -5,7 +5,7 @@ import {
   Bell,
   ChartNoAxesCombined,
   Clock3,
-  Gauge,
+  Signal,
   LayoutGrid,
   ListOrdered,
   Settings2,
@@ -139,17 +139,21 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <aside className="app-sider">
-        <div className="brand">
+      <header className="masthead">
+        <button
+          className="brand"
+          onClick={() => go('ranking')}
+          aria-label="CANNJudge Watcher · 首页"
+        >
           <span className="brand-mark">
-            <Gauge size={22} strokeWidth={1.8} />
+            <Signal size={22} strokeWidth={2.5} />
           </span>
           <div>
             <strong>CANNJudge</strong>
             <small>WATCHER</small>
           </div>
-        </div>
-        <nav className="side-nav" aria-label="主导航">
+        </button>
+        <nav className="masthead-nav" aria-label="主导航">
           {navigation.map(({ id, label, short, icon: Icon }) => (
             <button
               key={id}
@@ -163,41 +167,7 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <div className="side-foot">
-          <a href="https://cannjudge.cn/" target="_blank" rel="noreferrer">
-            CANNJudge 源站 <ArrowUpRight size={14} />
-          </a>
-        </div>
-      </aside>
-
-      <div className="app-main">
-        <header className="app-header">
-          <div className="header-context">
-            {scoped ? (
-              <SelectField
-                className="contest-select"
-                aria-label="选择赛事"
-                value={contestId}
-                onChange={(event) =>
-                  setSelection({ contestId: event.target.value, problemId: '' })
-                }
-                disabled={!contests?.length}
-              >
-                {!contests?.length && (
-                  <option value="">
-                    {contestList.pending ? '正在载入赛事…' : '暂无赛事'}
-                  </option>
-                )}
-                {contests?.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.title}
-                  </option>
-                ))}
-              </SelectField>
-            ) : (
-              <span>公开赛事监测</span>
-            )}
-          </div>
+        <div className="masthead-tools">
           <button
             className="source-status"
             type="button"
@@ -211,30 +181,80 @@ export default function App() {
               <Timestamp value={run?.finished_at ?? run?.started_at} />
             </span>
           </button>
-        </header>
+          <a
+            className="source-link"
+            aria-label="打开 CANNJudge 源站"
+            title="CANNJudge 源站"
+            href="https://cannjudge.cn/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <ArrowUpRight size={18} />
+          </a>
+        </div>
+      </header>
 
-        <main className="app-content" tabIndex={-1} ref={main}>
-          <div className="page-heading">
-            <div>
-              <h1>{title}</h1>
-              {((scoped && contest) || (performance && view === 'users')) && (
-                <p>
-                  {view === 'users'
-                    ? performance?.contestTitle
-                    : contest?.title}
-                </p>
-              )}
+      <div className="app-main">
+        {scoped && (
+          <div className="context-bar">
+            <div className="header-context">
+              <span className="context-label">赛事</span>
+              {
+                <SelectField
+                  className="contest-select"
+                  aria-label="选择赛事"
+                  value={contestId}
+                  onChange={(event) =>
+                    setSelection({
+                      contestId: event.target.value,
+                      problemId: '',
+                    })
+                  }
+                  disabled={!contests?.length}
+                >
+                  {!contests?.length && (
+                    <option value="">
+                      {contestList.pending ? '正在载入赛事…' : '暂无赛事'}
+                    </option>
+                  )}
+                  {contests?.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.title}
+                    </option>
+                  ))}
+                </SelectField>
+              }
             </div>
-            {scoped && contest && (
-              <Chip color={contest.status === 'ACTIVE' ? 'primary' : 'default'}>
+            {contest && (
+              <span
+                className="contest-state"
+                data-active={contest.status === 'ACTIVE'}
+              >
                 {contest.status === 'ACTIVE'
                   ? '进行中'
                   : contest.status === 'ENDED'
                     ? '已结束'
                     : '未开始'}
-              </Chip>
+              </span>
             )}
           </div>
+        )}
+
+        <main className="app-content" tabIndex={-1} ref={main}>
+          {(view !== 'ranking' || !contest || !problems) && (
+            <div className="page-heading">
+              <div>
+                <h1>{title}</h1>
+                {((scoped && contest) || (performance && view === 'users')) && (
+                  <p>
+                    {view === 'users'
+                      ? performance?.contestTitle
+                      : contest?.title}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
           {scoped && contestList.error && !contest && (
             <div className="error-line" role="alert">
               {contestList.error}{' '}
