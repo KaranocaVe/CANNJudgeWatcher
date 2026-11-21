@@ -46,6 +46,8 @@ export default function ParticipationView({
   const [error, setError] = useState('')
   const [expanded, setExpanded] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const [coverageOpen, setCoverageOpen] = useState(false)
+  const [coverageQuery, setCoverageQuery] = useState('')
 
   useEffect(() => {
     const controller = new AbortController()
@@ -101,7 +103,7 @@ export default function ParticipationView({
   return (
     <div className="panel-stack participation-page">
       <p className="participation-intro">
-        在已结束的个人赛中查找多次参赛、大量提交却较少进入前列的账号。同一赛区的初赛和决赛合为一场赛事，成绩按赛段核对。
+        按公开总榜、Watcher 观测和官方结果核对参赛记录。实时赛事可计入活动覆盖，最终成绩只使用已知结果。
       </p>
       <form
         className="participation-filters"
@@ -210,9 +212,8 @@ export default function ParticipationView({
               <div>
                 <h2 id="participation-results">筛选结果</h2>
                 <p>
-                  {items.length} 个账号 · 总榜覆盖 {data.coveredContests}/
-                  {data.eligibleContests} 个赛段 · 可核验奖项{' '}
-                  {data.awardCoveredContests} 段
+                  {items.length} 个账号 · 公开总榜覆盖 {data.coveredContests}/
+                  {data.eligibleContests} 个赛段 · 用户记录 {data.userCoveredContests ?? 0} 段
                 </p>
               </div>
               <Input
@@ -271,8 +272,7 @@ export default function ParticipationView({
           <details className="participation-method">
             <summary>数据来源与排序口径</summary>
             <p>
-              提交次数使用 CANNJudge 公开赛事总榜。Watcher
-              历史只计去重后确实观测到的提交，可用于核对覆盖。
+              提交次数优先使用公开赛事总榜。Watcher 历史只计去重后确实观测到的提交，可用于核对覆盖。综合分的结果分母只包含已知结果，未知结果不会被当作未获奖。
             </p>
             <p>
               只保留达成目标的赛段少于一半的账号。筛选分为 √参赛场次 × ln(1 +
@@ -288,31 +288,21 @@ export default function ParticipationView({
                 最近同步 <Timestamp value={data.refreshedAt} />
               </p>
             )}
-            <ul>
-              {data.contests.map((contest) => (
-                <li key={contest.id}>
-                  <a href={contest.sourceUrl} target="_blank" rel="noreferrer">
-                    {contest.title}
-                  </a>
-                  {contest.sampledAt
-                    ? ` · ${contest.participants} 个榜单账号`
-                    : ' · 待同步'}
-                  {contest.awardsSource && (
-                    <>
-                      {' '}
-                      ·{' '}
-                      <a
-                        href={contest.awardsSource}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        获奖来源
-                      </a>
-                    </>
-                  )}
-                </li>
-              ))}
-            </ul>
+            <button type="button" className="participation-coverage-toggle" onClick={() => setCoverageOpen(!coverageOpen)} aria-expanded={coverageOpen}>
+              全部赛段覆盖 <strong>{data.contests.length}</strong><span>{coverageOpen ? '收起' : '展开'}</span>
+            </button>
+            {coverageOpen && <div className="participation-coverage">
+              <Input aria-label="搜索赛段" placeholder="搜索赛段或组织" value={coverageQuery} onValueChange={setCoverageQuery} />
+              <ul>
+                {data.contests.filter((contest) => !coverageQuery.trim() || `${contest.title} ${contest.organization} ${contest.origin}`.toLowerCase().includes(coverageQuery.trim().toLowerCase())).map((contest) => (
+                  <li key={contest.id}>
+                    <span className="coverage-title">{contest.sourceUrl ? <a href={contest.sourceUrl} target="_blank" rel="noreferrer">{contest.title}</a> : contest.title}</span>
+                    <span className="coverage-meta"><Chip color={contest.origin === 'WATCHER' ? 'primary' : 'default'}>{contest.origin === 'WATCHER' ? 'Watcher' : '公开赛段'}</Chip><Chip>{contest.status === 'ENDED' ? '已结束' : contest.status === 'ACTIVE' ? '进行中' : contest.status === 'UPCOMING' ? '未开始' : '未知状态'}</Chip><Chip>{contest.organization === 'TEAM' ? '团队' : contest.organization === 'INDIVIDUAL' ? '个人' : '组织未知'}</Chip></span>
+                    <span className="coverage-counts">榜单 {number(contest.observedParticipants)} · 提交 {number(contest.totalSubmissions)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>}
           </details>
         </>
       )}
@@ -355,7 +345,7 @@ function ParticipationRow({
         </span>
         <span className="participation-metric">
           <span className="metric-label">参赛场次</span>
-          <b>{number(item.contestCount)}</b>
+          <b>{number(item.contestCount)}{item.lowerBound ? ' ≥' : ''}</b>
         </span>
         <span className="participation-metric submission-metric">
           <span className="metric-label">提交次数</span>
@@ -372,7 +362,7 @@ function ParticipationRow({
           </span>
           <b>
             {mode === 'awards' ? item.awardWins : item.topFinishes} /{' '}
-            {mode === 'awards' ? item.awardKnown : item.stageCount}
+            {mode === 'awards' ? item.awardKnown : item.rankKnown}
           </b>
         </span>
         <span className="participation-metric score-metric">
@@ -394,11 +384,9 @@ function ParticipationRow({
           <ul className="participation-entries">
             {item.entries.map((entry) => (
               <li className="participation-entry" key={entry.contestId}>
-                <a href={entry.sourceUrl} target="_blank" rel="noreferrer">
-                  {entry.title}
-                </a>
+                {entry.sourceUrl ? <a href={entry.sourceUrl} target="_blank" rel="noreferrer">{entry.title}</a> : <span>{entry.title}</span>}
                 <span>
-                  {number(entry.submissions)} 次提交
+                  {number(entry.submissions)} 次提交 · {entry.status === 'ACTIVE' ? '进行中' : entry.status === 'UPCOMING' ? '未开始' : entry.status === 'ENDED' ? '已结束' : '状态未知'}
                   <small>
                     Watcher 观测{' '}
                     {entry.observedSubmissions == null
@@ -407,7 +395,8 @@ function ParticipationRow({
                   </small>
                 </span>
                 <span>
-                  第 {number(entry.rank)} 名 / {number(entry.participants)}
+                  {entry.rank == null ? '无个人排名' : `第 ${number(entry.rank)} 名 / ${number(entry.participants)}`}
+                  {entry.rankSource === 'TEAM' && <small>团队排名</small>}
                 </span>
                 {entry.awardSource ? (
                   <a href={entry.awardSource} target="_blank" rel="noreferrer">
