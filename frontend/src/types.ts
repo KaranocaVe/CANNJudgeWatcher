@@ -85,6 +85,8 @@ export type ParticipationEntry = {
   rankSource: "INDIVIDUAL" | "TEAM" | null
   status: ParticipationStatus
   finalRank: boolean
+  rankUnavailable?: 'HIDDEN' | 'HISTORICAL' | 'UNSYNCED' | 'MULTIPLE_TEAMS' | 'MISSING_TEAM' | 'TEAM_NOT_LISTED' | 'NOT_LISTED' | null
+  observedProblemRank?: { problemTitle: string; rank: number; team: boolean } | null
   participants: number
   award?: boolean | null
   awardSource?: string | null

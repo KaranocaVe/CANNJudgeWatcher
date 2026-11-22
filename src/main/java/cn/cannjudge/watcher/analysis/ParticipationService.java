@@ -6,6 +6,7 @@ import static cn.cannjudge.watcher.source.CannJudgeClient.text;
 import cn.cannjudge.watcher.analysis.ParticipationRepository.Contest;
 import cn.cannjudge.watcher.analysis.ParticipationRepository.Key;
 import cn.cannjudge.watcher.analysis.ParticipationRepository.Observation;
+import cn.cannjudge.watcher.analysis.ParticipationRepository.ProblemRank;
 import cn.cannjudge.watcher.analysis.ParticipationRepository.Snapshot;
 import cn.cannjudge.watcher.analysis.ParticipationRepository.Standing;
 import cn.cannjudge.watcher.source.CannJudgeClient;
@@ -39,7 +40,8 @@ public class ParticipationService {
                        int observedParticipants, Long totalSubmissions, String rankAccess, Instant summarySampledAt) {}
   record Entry(String contestId, String title, String sourceUrl, int submissions, Integer rank, long participants,
                Boolean award, String awardSource, String agentSource, Integer observedSubmissions,
-               String submissionSource, String rankSource, String status, boolean finalRank) {}
+               String submissionSource, String rankSource, String status, boolean finalRank,
+               String rankUnavailable, ProblemRank observedProblemRank) {}
   record Candidate(String userId, String nickname, int contestCount, int stageCount, long submissions, int topFinishes,
                    int awardWins, int awardKnown, int agentEvidenceCount, double score, List<Entry> entries,
                    int rankKnown, boolean lowerBound) {}
@@ -235,6 +237,17 @@ public class ParticipationService {
     return new Response(refreshed, contests.size(), publicRanks, awardsCovered, items, contests, observed, personal, totals);
   }
 
+  private String missingRankReason(Snapshot snapshot, Observation observation) {
+    if (!"PUBLIC".equals(snapshot.contest().rankAccess())) return snapshot.contest().rankAccess();
+    if (snapshot.sampledAt() == null) return "UNSYNCED";
+    if ("TEAM".equals(snapshot.contest().organization()) && observation != null) {
+      if (observation.teamIds().size() > 1) return "MULTIPLE_TEAMS";
+      if (observation.teamIds().isEmpty()) return "MISSING_TEAM";
+      return "TEAM_NOT_LISTED";
+    }
+    return "NOT_LISTED";
+  }
+
   private void addEvidence(Snapshot snapshot, Map<Key,String> agentEvidence, Map<String,List<Evidence>> byUser) {
     Contest contest = snapshot.contest();
     boolean individuallyRanked = "INDIVIDUAL".equals(contest.organization());
@@ -260,11 +273,13 @@ public class ParticipationService {
       Boolean won = ended && snapshot.awardsSource() != null ? winners.contains(user) : null;
       boolean finalRank = ranked != null && ended && contest.endedAt() != null && snapshot.sampledAt() != null
           && !snapshot.sampledAt().isBefore(contest.endedAt());
+      String rankUnavailable = ranked == null ? missingRankReason(snapshot, observation) : null;
       Entry entry = new Entry(contest.id(), contest.title(), contest.sourceUrl(), submissions,
           ranked == null ? null : ranked.rank(), snapshot.standings().size(),
           won, won == null ? null : snapshot.awardsSource(), agentEvidence.get(new Key(contest.id(), user)),
           observation == null ? null : seen, personal != null && reported >= seen ? "OFFICIAL" : "WATCHER",
-          ranked == null ? null : personal != null ? "INDIVIDUAL" : "TEAM", contest.status(), finalRank);
+          ranked == null ? null : personal != null ? "INDIVIDUAL" : "TEAM", contest.status(), finalRank, rankUnavailable,
+          observation == null ? null : observation.problemRank());
       byUser.computeIfAbsent(user, ignored -> new ArrayList<>()).add(new Evidence(contest, name, entry));
     }
   }

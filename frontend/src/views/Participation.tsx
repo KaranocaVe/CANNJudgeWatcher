@@ -14,6 +14,7 @@ import { api } from '../api'
 import { isAbortError } from '../useResource'
 import type {
   ParticipationFilters as Filters,
+  ParticipationEntry,
   ParticipationItem,
   ParticipationResponse,
   SelectedUser,
@@ -507,17 +508,7 @@ function ParticipationRow({
                       : `${entry.observedSubmissions} 次`}
                   </small>
                 </span>
-                <span>
-                  {entry.rank == null
-                    ? '名次未知'
-                    : `第 ${number(entry.rank)} 名 / ${number(entry.participants)}`}
-                  {entry.rank != null && (
-                    <small>
-                      {entry.rankSource === 'TEAM' ? '团队排名' : '个人排名'}
-                      {entry.finalRank ? '' : ' · 阶段快照'}
-                    </small>
-                  )}
-                </span>
+                <EntryRank entry={entry} />
                 {entry.awardSource ? (
                   <a href={entry.awardSource} target="_blank" rel="noreferrer">
                     <Chip color={entry.award ? 'success' : 'default'}>
@@ -540,5 +531,50 @@ function ParticipationRow({
         </div>
       )}
     </article>
+  )
+}
+
+const unavailableRankLabels = {
+  HIDDEN: '总榜未开放',
+  HISTORICAL: '历史赛段无总榜',
+  UNSYNCED: '总榜待同步',
+  MULTIPLE_TEAMS: '观测到多支队伍',
+  MISSING_TEAM: '缺少队伍 ID',
+  TEAM_NOT_LISTED: '队伍未出现在总榜',
+  NOT_LISTED: '账号未出现在总榜',
+}
+
+function EntryRank({ entry }: { entry: ParticipationEntry }) {
+  if (entry.rank != null) {
+    return (
+      <span>
+        第 {number(entry.rank)} 名 / {number(entry.participants)}
+        <small>
+          {entry.rankSource === 'TEAM' ? '团队总榜' : '个人总榜'}
+          {entry.finalRank ? '' : ' · 阶段快照'}
+        </small>
+      </span>
+    )
+  }
+  const reason = entry.rankUnavailable
+    ? unavailableRankLabels[entry.rankUnavailable]
+    : '暂无总榜名次'
+  const observed = entry.observedProblemRank
+  return (
+    <span>
+      {observed ? (
+        <>
+          曾观测到{observed.team ? '队伍' : '个人'}题榜第{' '}
+          {number(observed.rank)} 名
+        </>
+      ) : (
+        reason
+      )}
+      {observed && (
+        <small>
+          {observed.problemTitle} · {reason}
+        </small>
+      )}
+    </span>
   )
 }

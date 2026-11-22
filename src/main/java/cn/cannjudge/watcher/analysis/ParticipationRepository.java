@@ -18,7 +18,8 @@ public class ParticipationRepository {
   record Contest(String id, String title, String competitionKey, String sourceUrl, Instant startsAt,
                  Instant endedAt, String origin, String status, String organization, String rankAccess, boolean byPassCount) {}
   record Standing(String userId, String nickname, int submissions, int passed, java.math.BigDecimal score, int rank) {}
-  record Observation(String userId, String nickname, int submissions, List<String> teamIds) {}
+  record ProblemRank(String problemTitle, int rank, boolean team) {}
+  record Observation(String userId, String nickname, int submissions, List<String> teamIds, ProblemRank problemRank) {}
   record Snapshot(Contest contest, Instant sampledAt, List<Standing> standings, String awardsSource, List<String> winners,
                   Instant summarySampledAt, Long totalParticipants, Long totalSubmissions, List<Observation> observations) {}
   record Key(String contestId, String userId) {}
@@ -85,32 +86,47 @@ public class ParticipationRepository {
     // Only credit an explicit submitter on team rows. Never assign the team's total to a member.
     jdbc.query("""
         WITH samples AS (
-          SELECT contest_id,team_id,user_id,user_nickname,submitter_id,submitter_nickname,submission_id,observed_at
+          SELECT contest_id,team_id,user_id,user_nickname,submitter_id,submitter_nickname,submission_id,observed_at,problem_id,rank
             FROM ranking_event WHERE event_type<>'DELETE' AND submission_id<>''
           UNION ALL
-          SELECT contest_id,team_id,user_id,user_nickname,submitter_id,submitter_nickname,submission_id,updated_at
+          SELECT contest_id,team_id,user_id,user_nickname,submitter_id,submitter_nickname,submission_id,updated_at,problem_id,rank
             FROM ranking_current WHERE submission_id<>''
         ), named AS (
           SELECT contest_id, NULLIF(team_id,'') AS team_id,
             COALESCE(NULLIF(submitter_id,''),CASE WHEN NULLIF(team_id,'') IS NULL THEN NULLIF(user_id,'') END) AS person,
             COALESCE(NULLIF(submitter_nickname,''),CASE WHEN submitter_id=user_id OR NULLIF(team_id,'') IS NULL
               THEN NULLIF(user_nickname,'') END) AS name,
-            submission_id,observed_at FROM samples
+            submission_id,observed_at,problem_id,rank FROM samples
         ), distinct_submissions AS (
           SELECT contest_id, submission_id, min(person) AS person,
             (array_agg(name ORDER BY observed_at DESC) FILTER (WHERE name IS NOT NULL))[1] AS name,
             CASE WHEN count(DISTINCT team_id)=1 THEN min(team_id) END AS team_id,
-            max(observed_at) AS observed_at
+            max(observed_at) AS observed_at,
+            CASE WHEN count(DISTINCT problem_id)=1 THEN min(problem_id) END AS problem_id,
+            min(rank) FILTER (WHERE rank>0) AS best_rank,
+            bool_or(team_id IS NOT NULL) AS team
           FROM named WHERE person IS NOT NULL
           GROUP BY contest_id, submission_id HAVING count(DISTINCT person)=1
+        ), participant_counts AS (
+          SELECT contest_id,person,count(*) AS submissions,
+            (array_agg(name ORDER BY observed_at DESC) FILTER (WHERE name IS NOT NULL))[1] AS nickname,
+            COALESCE(array_agg(DISTINCT team_id) FILTER (WHERE team_id IS NOT NULL),ARRAY[]::varchar[]) AS teams
+          FROM distinct_submissions GROUP BY contest_id,person
+        ), best_problem AS (
+          SELECT DISTINCT ON (contest_id,person) contest_id,person,problem_id,best_rank,team
+          FROM distinct_submissions
+          WHERE problem_id IS NOT NULL AND best_rank IS NOT NULL
+          ORDER BY contest_id,person,best_rank,observed_at DESC,problem_id,submission_id
         )
-        SELECT contest_id,person,count(*) AS submissions,
-          (array_agg(name ORDER BY observed_at DESC) FILTER (WHERE name IS NOT NULL))[1] AS nickname,
-          COALESCE(array_agg(DISTINCT team_id) FILTER (WHERE team_id IS NOT NULL),ARRAY[]::varchar[]) AS teams
-        FROM distinct_submissions GROUP BY contest_id,person
+        SELECT c.*,r.best_rank,r.team,p.title AS problem_title
+        FROM participant_counts c LEFT JOIN best_problem r USING (contest_id,person)
+        LEFT JOIN problem p ON p.id=r.problem_id AND p.contest_id=r.contest_id
         """, rs -> {
+          Integer rank = rs.getObject("best_rank", Integer.class);
+          String title = rs.getString("problem_title");
+          ProblemRank problemRank = rank != null && title != null ? new ProblemRank(title, rank, rs.getBoolean("team")) : null;
           var row = new Observation(rs.getString("person"), rs.getString("nickname"), rs.getInt("submissions"),
-              List.of((String[]) rs.getArray("teams").getArray()));
+              List.of((String[]) rs.getArray("teams").getArray()), problemRank);
           observations.computeIfAbsent(rs.getString("contest_id"), ignored -> new ArrayList<>()).add(row);
         });
     List<String> contests = jdbc.queryForList("SELECT contest_id FROM participation_contest WHERE eligible", String.class);
